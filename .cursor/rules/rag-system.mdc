@@ -1,0 +1,36 @@
+---
+description: RAG implementation rules
+alwaysApply: false
+globs:
+  - ai-service/**/*.py
+  - backend/**/*.php
+---
+
+# RAG System Rules
+
+## Must
+
+- Only retrieve published documents by default.
+- Return citations with every generated answer.
+- Keep chunk metadata rich enough for source display.
+- Use hybrid retrieval: vector + full-text.
+- State uncertainty when sources are insufficient.
+
+## Must Not
+
+- Do not answer from model memory for regulated business topics.
+- Do not cite documents that were not retrieved.
+- Do not silently include expired documents.
+- Do not hardcode legal conclusions in code.
+
+## Retrieval Contract
+
+Each retrieved item must contain:
+
+- document_id
+- chunk_id
+- document_title
+- content
+- score
+- source_url
+- metadata
