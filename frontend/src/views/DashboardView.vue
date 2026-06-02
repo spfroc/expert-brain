@@ -1,11 +1,11 @@
 <template>
-  <div class="min-h-screen bg-slate-100">
-    <header class="bg-white border-b px-8 py-4">
-      <h1 class="text-2xl font-semibold">ExpertBrain</h1>
-      <p class="text-slate-500 mt-1">企业行业专家系统</p>
-    </header>
+  <div class="space-y-6">
+    <div>
+      <h1 class="text-2xl font-semibold">工作台</h1>
+      <p class="text-slate-500 mt-1">ExpertBrain Phase 0 工程骨架</p>
+    </div>
 
-    <main class="p-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
       <el-card>
         <div class="text-slate-500">知识库</div>
         <div class="text-3xl font-bold mt-2">0</div>
@@ -22,6 +22,13 @@
         <div class="text-slate-500">方案</div>
         <div class="text-3xl font-bold mt-2">0</div>
       </el-card>
-    </main>
+    </div>
+
+    <el-alert
+      title="下一步：完成 Issue #2 初始化 Laravel Backend，并接入 docker-compose。"
+      type="info"
+      show-icon
+      :closable="false"
+    />
   </div>
 </template>
