@@ -1,0 +1,30 @@
+---
+description: ExpertBrain product requirements and scope guard
+alwaysApply: true
+---
+
+# Product Requirements Rule
+
+ExpertBrain 是企业行业专家系统，不是普通聊天机器人。
+
+## Must Follow
+
+- V1 首期场景是山东省政府采购业务。
+- 任何 AI 回答功能都必须支持引用来源。
+- 确定性业务判断优先使用规则引擎。
+- 不要实现自动操作第三方采购平台。
+- 不要把法规和平台规则硬编码进 Prompt。
+- 不确定时返回待确认事项。
+
+## V1 Core Modules
+
+- Auth/RBAC
+- Knowledge Management
+- Document Parsing
+- Chunk + Embedding
+- RAG QA
+- Customer Management
+- Business Rules
+- Plan Generation
+- Case Studies
+- Audit Logs
