@@ -30,6 +30,31 @@ ExpertBrain 的目标不是做一个普通知识库，也不是简单的 RAG 问
 - Embedding: BGE-M3
 - LLM: 优先使用 API 模型，后续支持本地 Qwen 8B/14B
 
+## Quick Start
+
+当前仓库已包含 Frontend、AI Service、PostgreSQL、Redis 的 Phase 0 工程骨架。
+
+```bash
+cp .env.example .env
+make up
+make ps
+curl http://localhost:8000/health
+```
+
+前端开发地址：
+
+```text
+http://localhost:5173
+```
+
+Backend 需要通过 Composer 初始化：
+
+```bash
+bash scripts/init-backend.sh
+```
+
+然后按 `docs/13-Phase-0-Checklist.md` 接入 Docker Compose。
+
 ## 推荐目录
 
 ```text
@@ -41,6 +66,7 @@ expert-brain/
 ├── docs/                 # 产品、架构、数据库、API、RAG 文档
 ├── prompts/              # RAG、客户分析、方案生成 Prompt
 ├── skills/               # 给 Agent 使用的项目技能说明
+├── scripts/              # 初始化和维护脚本
 ├── .cursor/rules/        # Cursor Agent 规则
 ├── .github/              # GitHub Copilot / Issue 模板 / Workflow
 └── AGENTS.md             # Agent 总规则
@@ -68,3 +94,4 @@ expert-brain/
 - [前端设计](docs/10-Frontend-Design.md)
 - [开发路线图](docs/11-Development-Roadmap.md)
 - [Agent 任务拆分](docs/12-Agent-Tasks.md)
+- [Phase 0 检查清单](docs/13-Phase-0-Checklist.md)
