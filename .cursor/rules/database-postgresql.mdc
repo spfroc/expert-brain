@@ -1,0 +1,32 @@
+---
+description: PostgreSQL and pgvector database rules
+alwaysApply: false
+globs:
+  - backend/database/migrations/**/*.php
+  - backend/**/*.php
+  - ai-service/**/*.py
+---
+
+# Database PostgreSQL Rules
+
+## Stack
+
+- PostgreSQL 16+
+- pgvector
+- pg_trgm
+
+## Rules
+
+- Use migrations for schema changes.
+- Use JSONB for flexible metadata.
+- Add indexes for status, foreign keys, and frequently filtered fields.
+- Store embedding in knowledge_chunks using vector(1024) for BGE-M3.
+- Record content_hash to avoid duplicate embedding.
+- Do not delete published knowledge silently; prefer archived or expired.
+
+## Extensions
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
