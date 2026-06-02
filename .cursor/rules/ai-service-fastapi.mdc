@@ -1,0 +1,39 @@
+---
+description: FastAPI AI service implementation rules
+alwaysApply: false
+globs:
+  - ai-service/**/*.py
+---
+
+# AI Service FastAPI Rules
+
+## Stack
+
+- Python 3.11+
+- FastAPI
+- Pydantic
+- SQLAlchemy or psycopg
+- pytest
+
+## Responsibilities
+
+- Document parsing
+- Markdown normalization
+- Chunk splitting
+- Embedding generation
+- Hybrid retrieval
+- LLM provider calls
+- Prompt orchestration
+
+## Boundaries
+
+- Do not implement business permission logic here.
+- Do not expose AI Service directly to frontend.
+- Return structured JSON to Laravel.
+- Do not store API keys in code.
+
+## Quality
+
+- Add tests for chunking and retrieval.
+- Keep provider interfaces replaceable.
+- Log request IDs, not sensitive prompt secrets.
