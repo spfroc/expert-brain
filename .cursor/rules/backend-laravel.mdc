@@ -1,0 +1,39 @@
+---
+description: Laravel backend implementation rules
+alwaysApply: false
+globs:
+  - backend/**/*.php
+  - backend/**/*.env.example
+---
+
+# Backend Laravel Rules
+
+## Stack
+
+- Laravel 11+
+- PostgreSQL
+- Sanctum
+- spatie/laravel-permission
+- Redis Queue
+
+## API Rules
+
+- All APIs under `/api/v1`.
+- Use FormRequest validation for write APIs.
+- Use API Resource for response transformation.
+- Use Policy/Gate/Permission middleware for authorization.
+- Return consistent JSON response shape.
+
+## Database Rules
+
+- Use migrations for every schema change.
+- Add indexes for foreign keys and query filters.
+- Use JSONB for flexible metadata.
+- Use transactions for multi-table writes.
+
+## Domain Rules
+
+- Laravel owns business state.
+- FastAPI owns AI processing.
+- Frontend must not call FastAPI directly.
+- Important mutations must write audit_logs.
