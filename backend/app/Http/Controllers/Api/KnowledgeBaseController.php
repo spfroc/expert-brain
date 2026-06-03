@@ -29,9 +29,14 @@ class KnowledgeBaseController extends Controller
 
     public function store(KnowledgeBaseRequest $request): KnowledgeBaseResource
     {
-        $base = KnowledgeBase::query()->create($request->validated() + [
-            'created_by' => $request->user()?->id,
-        ]);
+        $payload = collect($request->validated())
+            ->filter(fn ($value) => $value !== null)
+            ->all();
+
+        $payload['status'] ??= 'active';
+        $payload['created_by'] = $request->user()?->id;
+
+        $base = KnowledgeBase::query()->create($payload);
 
         return new KnowledgeBaseResource($base);
     }
@@ -43,7 +48,11 @@ class KnowledgeBaseController extends Controller
 
     public function update(KnowledgeBaseRequest $request, KnowledgeBase $knowledgeBase): KnowledgeBaseResource
     {
-        $knowledgeBase->update($request->validated());
+        $payload = collect($request->validated())
+            ->filter(fn ($value) => $value !== null)
+            ->all();
+
+        $knowledgeBase->update($payload);
 
         return new KnowledgeBaseResource($knowledgeBase->refresh());
     }
