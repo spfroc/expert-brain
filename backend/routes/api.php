@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\DocumentIngestionController;
 use App\Http\Controllers\Api\KnowledgeBaseController;
 use App\Http\Controllers\Api\KnowledgeCategoryController;
 use App\Http\Controllers\Api\KnowledgeDocumentController;
@@ -26,6 +27,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('knowledge-documents/{knowledgeDocument}/publish', [KnowledgeDocumentController::class, 'publish']);
         Route::post('knowledge-documents/{knowledgeDocument}/expire', [KnowledgeDocumentController::class, 'expire']);
         Route::post('knowledge-documents/{knowledgeDocument}/archive', [KnowledgeDocumentController::class, 'archive']);
+        Route::post('knowledge-documents/{knowledgeDocument}/files', [DocumentIngestionController::class, 'uploadFile']);
+        Route::post('knowledge-documents/import-url', [DocumentIngestionController::class, 'importUrl']);
     });
 });
 
