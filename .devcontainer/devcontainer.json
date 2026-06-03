@@ -1,0 +1,52 @@
+{
+  "name": "ExpertBrain Dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/php:1": {
+      "version": "8.4",
+      "installComposer": true
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "xdebug.php-debug",
+        "Vue.volar",
+        "bradlc.vscode-tailwindcss",
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ]
+    }
+  },
+  "forwardPorts": [15173, 18080, 18000, 15432, 16379],
+  "portsAttributes": {
+    "15173": {
+      "label": "ExpertBrain Frontend",
+      "onAutoForward": "openBrowser"
+    },
+    "18080": {
+      "label": "ExpertBrain Laravel API"
+    },
+    "18000": {
+      "label": "ExpertBrain AI Service"
+    },
+    "15432": {
+      "label": "PostgreSQL pgvector"
+    },
+    "16379": {
+      "label": "Redis"
+    }
+  },
+  "postCreateCommand": "bash scripts/codespaces-post-create.sh",
+  "remoteUser": "vscode"
+}
