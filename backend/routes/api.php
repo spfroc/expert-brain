@@ -29,6 +29,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('knowledge-documents/{knowledgeDocument}/archive', [KnowledgeDocumentController::class, 'archive']);
         Route::post('knowledge-documents/{knowledgeDocument}/files', [DocumentIngestionController::class, 'uploadFile']);
         Route::post('knowledge-documents/import-url', [DocumentIngestionController::class, 'importUrl']);
+        Route::post('document-ingestion-jobs/{documentIngestionJob}/process', [DocumentIngestionController::class, 'process']);
     });
 });
 
