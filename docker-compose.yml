@@ -74,11 +74,14 @@ services:
     working_dir: /app
     restart: unless-stopped
     environment:
-      VITE_API_BASE_URL: http://localhost:18080/api/v1
+      VITE_API_BASE_URL: /api/v1
+      VITE_API_PROXY_TARGET: http://backend:8080
     ports:
       - "15173:5173"
     volumes:
       - ./frontend:/app
+    depends_on:
+      - backend
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
 volumes:
