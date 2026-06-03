@@ -5,6 +5,7 @@ import DashboardView from '@/views/DashboardView.vue'
 import LoginView from '@/views/LoginView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
 import KnowledgeCenterView from '@/views/knowledge/KnowledgeCenterView.vue'
+import TaskCenterView from '@/views/tasks/TaskCenterView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 export const router = createRouter({
@@ -36,6 +37,12 @@ export const router = createRouter({
           name: 'knowledge-documents',
           component: KnowledgeCenterView,
           meta: { title: '知识中心', permission: 'knowledge_document.view' }
+        },
+        {
+          path: 'tasks',
+          name: 'tasks',
+          component: TaskCenterView,
+          meta: { title: '任务中心', permission: 'knowledge_document.reindex' }
         },
         {
           path: 'rag/chat',
