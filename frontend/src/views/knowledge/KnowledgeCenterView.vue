@@ -14,7 +14,7 @@
     </div>
 
     <el-alert
-      title="当前文件上传和链接导入会创建入库任务；真正的 Word/PDF/网页解析将在 AI Service 接入后执行。"
+      title="文件上传和链接导入会创建入库任务；任务执行完成后，可以在文档行内查看切片结果。"
       type="info"
       show-icon
       :closable="false"
@@ -68,10 +68,11 @@
               </template>
             </el-table-column>
             <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column label="操作" width="310">
+            <el-table-column label="操作" width="370">
               <template #default="scope">
                 <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
                 <el-button link type="info" @click="openUploadDialog(scope.row)">上传文件</el-button>
+                <el-button link type="primary" @click="openChunksDialog(scope.row)">切片</el-button>
                 <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
                 <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
               </template>
@@ -171,7 +172,7 @@
 
     <el-dialog v-model="uploadDialogVisible" title="上传文件并创建入库任务" width="560px">
       <el-alert
-        title="支持先上传 docx、pdf、xlsx、txt、md 等文件。当前阶段会保存原始文件并创建解析任务，解析任务将在后续 AI Service 中执行。"
+        title="支持先上传 docx、pdf、xlsx、txt、md 等文件。当前阶段会保存原始文件并创建解析任务，解析任务将在 AI Service 中执行。"
         type="info"
         show-icon
         :closable="false"
@@ -223,6 +224,32 @@
         <el-button type="primary" :loading="importingUrl" @click="submitUrlImport">导入</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="chunksDialogVisible" :title="`文档切片：${chunkDocument?.title ?? ''}`" width="900px">
+      <div class="flex items-center gap-2 mb-4">
+        <el-input v-model="chunkKeyword" placeholder="搜索切片内容" clearable style="width: 260px" @keyup.enter="loadChunks" />
+        <el-button @click="loadChunks">搜索</el-button>
+      </div>
+      <el-table :data="chunks" v-loading="loadingChunks" height="460">
+        <el-table-column prop="chunk_index" label="#" width="70" />
+        <el-table-column prop="token_count" label="Token" width="90" />
+        <el-table-column label="内容" min-width="560">
+          <template #default="scope">
+            <div class="whitespace-pre-wrap text-sm leading-6">{{ scope.row.content }}</div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="flex justify-end mt-4">
+        <el-pagination
+          background
+          layout="prev, pager, next, total"
+          :total="chunkPagination.total"
+          :page-size="chunkPagination.per_page"
+          :current-page="chunkPagination.current_page"
+          @current-change="handleChunkPageChange"
+        />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -236,6 +263,7 @@ import {
   createKnowledgeDocument,
   createKnowledgeTag,
   importKnowledgeDocumentUrl,
+  listDocumentChunks,
   listKnowledgeBases,
   listKnowledgeDocuments,
   publishKnowledgeDocument,
@@ -243,7 +271,7 @@ import {
   updateKnowledgeDocument,
   uploadKnowledgeDocumentFile
 } from '@/api/knowledge'
-import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
+import type { DocumentChunk, KnowledgeBase, KnowledgeDocument, PaginationMeta } from '@/types/knowledge'
 
 const bases = ref<KnowledgeBase[]>([])
 const documents = ref<KnowledgeDocument[]>([])
@@ -252,6 +280,7 @@ const documentKeyword = ref('')
 
 const loadingBases = ref(false)
 const loadingDocuments = ref(false)
+const loadingChunks = ref(false)
 const savingBase = ref(false)
 const savingTag = ref(false)
 const savingDocument = ref(false)
@@ -263,11 +292,25 @@ const tagDialogVisible = ref(false)
 const documentDialogVisible = ref(false)
 const uploadDialogVisible = ref(false)
 const urlDialogVisible = ref(false)
+const chunksDialogVisible = ref(false)
 
 const editingBase = ref<KnowledgeBase | null>(null)
 const editingDocument = ref<KnowledgeDocument | null>(null)
 const uploadingDocument = ref<KnowledgeDocument | null>(null)
+const chunkDocument = ref<KnowledgeDocument | null>(null)
 const selectedUploadFile = ref<File | null>(null)
+const chunks = ref<DocumentChunk[]>([])
+const chunkKeyword = ref('')
+
+const chunkPagination = reactive<PaginationMeta>({
+  current_page: 1,
+  from: null,
+  last_page: 1,
+  path: '',
+  per_page: 10,
+  to: null,
+  total: 0
+})
 
 const baseForm = reactive({ name: '', industry: '', description: '', status: 'active' })
 const tagForm = reactive({ name: '', tag_type: '' })
@@ -486,6 +529,36 @@ async function submitUrlImport(): Promise<void> {
   } finally {
     importingUrl.value = false
   }
+}
+
+async function openChunksDialog(row: KnowledgeDocument): Promise<void> {
+  chunkDocument.value = row
+  chunkKeyword.value = ''
+  chunkPagination.current_page = 1
+  chunksDialogVisible.value = true
+  await loadChunks()
+}
+
+async function loadChunks(): Promise<void> {
+  if (!chunkDocument.value) return
+
+  loadingChunks.value = true
+  try {
+    const response = await listDocumentChunks(chunkDocument.value.id, {
+      keyword: chunkKeyword.value || undefined,
+      page: chunkPagination.current_page,
+      per_page: chunkPagination.per_page
+    })
+    chunks.value = response.data
+    Object.assign(chunkPagination, response.meta)
+  } finally {
+    loadingChunks.value = false
+  }
+}
+
+function handleChunkPageChange(page: number): void {
+  chunkPagination.current_page = page
+  void loadChunks()
 }
 
 async function publishDocument(id: number): Promise<void> {
