@@ -43,11 +43,16 @@ class KnowledgeDocumentController extends Controller
 
     public function store(KnowledgeDocumentRequest $request): KnowledgeDocumentResource
     {
-        $payload = $request->safe()->except('tag_ids');
-        $document = KnowledgeDocument::query()->create($payload + [
-            'created_by' => $request->user()?->id,
-        ]);
+        $payload = collect($request->safe()->except('tag_ids'))
+            ->filter(fn ($value) => $value !== null)
+            ->all();
 
+        $payload['source_type'] ??= 'manual';
+        $payload['version'] ??= '1.0';
+        $payload['status'] ??= 'draft';
+        $payload['created_by'] = $request->user()?->id;
+
+        $document = KnowledgeDocument::query()->create($payload);
         $document->tags()->sync($request->input('tag_ids', []));
 
         return new KnowledgeDocumentResource($document->load('tags'));
@@ -60,7 +65,10 @@ class KnowledgeDocumentController extends Controller
 
     public function update(KnowledgeDocumentRequest $request, KnowledgeDocument $knowledgeDocument): KnowledgeDocumentResource
     {
-        $payload = $request->safe()->except('tag_ids');
+        $payload = collect($request->safe()->except('tag_ids'))
+            ->filter(fn ($value) => $value !== null)
+            ->all();
+
         $knowledgeDocument->update($payload);
 
         if ($request->has('tag_ids')) {
