@@ -3,14 +3,22 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold">知识中心</h1>
-        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档。</p>
+        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档，支持手工录入、文件上传和链接导入。</p>
       </div>
       <div class="flex gap-2">
         <el-button @click="openTagDialog">新增标签</el-button>
         <el-button type="primary" @click="openBaseDialog()">新增知识库</el-button>
         <el-button type="success" @click="openDocumentDialog()">新增文档</el-button>
+        <el-button type="warning" @click="openUrlImportDialog">导入链接</el-button>
       </div>
     </div>
+
+    <el-alert
+      title="当前文件上传和链接导入会创建入库任务；真正的 Word/PDF/网页解析将在 AI Service 接入后执行。"
+      type="info"
+      show-icon
+      :closable="false"
+    />
 
     <el-row :gutter="16">
       <el-col :span="8">
@@ -25,6 +33,11 @@
           <el-table :data="bases" v-loading="loadingBases" @row-click="selectBase" highlight-current-row>
             <el-table-column prop="name" label="名称" min-width="160" />
             <el-table-column prop="industry" label="行业" width="100" />
+            <el-table-column label="状态" width="90">
+              <template #default="scope">
+                <el-tag>{{ scope.row.status ?? 'active' }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="操作" width="90">
               <template #default="scope">
                 <el-button link type="primary" @click.stop="openBaseDialog(scope.row)">编辑</el-button>
@@ -55,9 +68,10 @@
               </template>
             </el-table-column>
             <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column label="操作" width="230">
+            <el-table-column label="操作" width="310">
               <template #default="scope">
                 <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
+                <el-button link type="info" @click="openUploadDialog(scope.row)">上传文件</el-button>
                 <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
                 <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
               </template>
@@ -125,6 +139,8 @@
                 <el-option label="平台文档" value="platform_doc" />
                 <el-option label="通知公告" value="notice" />
                 <el-option label="业务经验" value="faq" />
+                <el-option label="文件" value="file" />
+                <el-option label="链接" value="url" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -152,22 +168,80 @@
         <el-button type="primary" :loading="savingDocument" @click="saveDocument">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="uploadDialogVisible" title="上传文件并创建入库任务" width="560px">
+      <el-alert
+        title="支持先上传 docx、pdf、xlsx、txt、md 等文件。当前阶段会保存原始文件并创建解析任务，解析任务将在后续 AI Service 中执行。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-4"
+      />
+      <el-upload
+        drag
+        :auto-upload="false"
+        :limit="1"
+        :on-change="handleFileChange"
+        :on-remove="handleFileRemove"
+      >
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">拖拽文件到这里，或点击选择文件</div>
+        <template #tip>
+          <div class="el-upload__tip">单个文件最大 50MB。</div>
+        </template>
+      </el-upload>
+      <template #footer>
+        <el-button @click="uploadDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="uploadingFile" @click="submitFileUpload">上传</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="urlDialogVisible" title="导入链接并创建入库任务" width="640px">
+      <el-form label-position="top">
+        <el-form-item label="所属知识库">
+          <el-select v-model="urlForm.knowledge_base_id" placeholder="请选择知识库" class="w-full">
+            <el-option v-for="base in bases" :key="base.id" :label="base.name" :value="base.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标题">
+          <el-input v-model="urlForm.title" placeholder="可为空，系统先使用 URL 作为标题" />
+        </el-form-item>
+        <el-form-item label="链接 URL">
+          <el-input v-model="urlForm.url" placeholder="https://..." />
+        </el-form-item>
+        <el-form-item label="来源类型">
+          <el-select v-model="urlForm.source_type" class="w-full">
+            <el-option label="普通链接" value="url" />
+            <el-option label="政策法规" value="policy" />
+            <el-option label="平台文档" value="platform_doc" />
+            <el-option label="通知公告" value="notice" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="urlDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="importingUrl" @click="submitUrlImport">导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, type UploadFile } from 'element-plus'
+import { UploadFilled } from '@element-plus/icons-vue'
 import {
   archiveKnowledgeDocument,
   createKnowledgeBase,
   createKnowledgeDocument,
   createKnowledgeTag,
+  importKnowledgeDocumentUrl,
   listKnowledgeBases,
   listKnowledgeDocuments,
   publishKnowledgeDocument,
   updateKnowledgeBase,
-  updateKnowledgeDocument
+  updateKnowledgeDocument,
+  uploadKnowledgeDocumentFile
 } from '@/api/knowledge'
 import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
 
@@ -181,12 +255,19 @@ const loadingDocuments = ref(false)
 const savingBase = ref(false)
 const savingTag = ref(false)
 const savingDocument = ref(false)
+const uploadingFile = ref(false)
+const importingUrl = ref(false)
 
 const baseDialogVisible = ref(false)
 const tagDialogVisible = ref(false)
 const documentDialogVisible = ref(false)
+const uploadDialogVisible = ref(false)
+const urlDialogVisible = ref(false)
+
 const editingBase = ref<KnowledgeBase | null>(null)
 const editingDocument = ref<KnowledgeDocument | null>(null)
+const uploadingDocument = ref<KnowledgeDocument | null>(null)
+const selectedUploadFile = ref<File | null>(null)
 
 const baseForm = reactive({ name: '', industry: '', description: '', status: 'active' })
 const tagForm = reactive({ name: '', tag_type: '' })
@@ -199,6 +280,12 @@ const documentForm = reactive({
   source_url: '',
   version: '1.0',
   status: 'draft'
+})
+const urlForm = reactive({
+  knowledge_base_id: null as number | null,
+  title: '',
+  url: '',
+  source_type: 'url' as 'url' | 'policy' | 'platform_doc' | 'notice'
 })
 
 function resetBaseForm(): void {
@@ -333,6 +420,71 @@ async function saveDocument(): Promise<void> {
     await loadDocuments()
   } finally {
     savingDocument.value = false
+  }
+}
+
+function openUploadDialog(row: KnowledgeDocument): void {
+  uploadingDocument.value = row
+  selectedUploadFile.value = null
+  uploadDialogVisible.value = true
+}
+
+function handleFileChange(uploadFile: UploadFile): void {
+  selectedUploadFile.value = uploadFile.raw ?? null
+}
+
+function handleFileRemove(): void {
+  selectedUploadFile.value = null
+}
+
+async function submitFileUpload(): Promise<void> {
+  if (!uploadingDocument.value) {
+    ElMessage.warning('请先选择文档')
+    return
+  }
+  if (!selectedUploadFile.value) {
+    ElMessage.warning('请选择文件')
+    return
+  }
+
+  uploadingFile.value = true
+  try {
+    await uploadKnowledgeDocumentFile(uploadingDocument.value.id, selectedUploadFile.value)
+    ElMessage.success('文件已上传，解析任务已创建')
+    uploadDialogVisible.value = false
+  } finally {
+    uploadingFile.value = false
+  }
+}
+
+function openUrlImportDialog(): void {
+  Object.assign(urlForm, {
+    knowledge_base_id: selectedBaseId.value,
+    title: '',
+    url: '',
+    source_type: 'url'
+  })
+  urlDialogVisible.value = true
+}
+
+async function submitUrlImport(): Promise<void> {
+  if (!urlForm.knowledge_base_id) {
+    ElMessage.warning('请先选择知识库')
+    return
+  }
+  if (!urlForm.url) {
+    ElMessage.warning('请输入链接')
+    return
+  }
+
+  importingUrl.value = true
+  try {
+    await importKnowledgeDocumentUrl(urlForm)
+    ElMessage.success('链接已导入，抓取任务已创建')
+    urlDialogVisible.value = false
+    await loadDocuments()
+  } finally {
+    importingUrl.value = false
   }
 }
 
