@@ -1,5 +1,6 @@
 import hashlib
 import math
+from functools import cached_property
 
 from app.config import settings
 
@@ -10,10 +11,28 @@ class EmbeddingService:
         self.model = settings.embedding_model
         self.dimension = settings.embedding_dimension
 
+    @cached_property
+    def local_model(self):
+        if self.provider != 'sentence-transformers':
+            return None
+
+        from sentence_transformers import SentenceTransformer
+
+        model_name_or_path = settings.embedding_model_path or settings.embedding_model
+        return SentenceTransformer(model_name_or_path, device=settings.embedding_device)
+
     def embed(self, texts: list[str], normalize: bool = True) -> list[list[float]]:
-        # MVP fallback. This keeps the whole pipeline runnable before bge-m3 is downloaded.
-        # Replace this branch with a real local sentence-transformers backend once the model is mounted.
+        if self.provider == 'sentence-transformers':
+            return self._sentence_transformers_embed(texts, normalize=normalize)
+
         return [self._hash_embedding(text, normalize=normalize) for text in texts]
+
+    def _sentence_transformers_embed(self, texts: list[str], normalize: bool = True) -> list[list[float]]:
+        model = self.local_model
+        vectors = model.encode(texts, normalize_embeddings=normalize, convert_to_numpy=True).tolist()
+        if vectors:
+            self.dimension = len(vectors[0])
+        return vectors
 
     def _hash_embedding(self, text: str, normalize: bool = True) -> list[float]:
         vector = [0.0] * self.dimension
@@ -35,7 +54,6 @@ class EmbeddingService:
         return vector
 
     def _tokenize(self, text: str) -> list[str]:
-        # Simple mixed Chinese/English tokenizer for deterministic fallback embeddings.
         tokens: list[str] = []
         buffer: list[str] = []
 
