@@ -61,6 +61,7 @@ services:
       - "18000:8000"
     volumes:
       - ./ai-service:/app
+      - ${EXPERT_BRAIN_MODELS_DIR:-./models}:/models
     depends_on:
       postgres:
         condition: service_healthy
