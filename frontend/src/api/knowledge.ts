@@ -23,6 +23,13 @@ export interface KnowledgeDocumentPayload {
   tag_ids?: number[]
 }
 
+export interface ImportUrlPayload {
+  knowledge_base_id: number | null
+  title?: string | null
+  url: string
+  source_type?: 'url' | 'policy' | 'platform_doc' | 'notice'
+}
+
 export async function listKnowledgeBases(params: ListParams = {}): Promise<PaginatedResponse<KnowledgeBase>> {
   const response = await http.get<PaginatedResponse<KnowledgeBase>>('/knowledge-bases', { params })
   return response.data
@@ -75,4 +82,18 @@ export async function publishKnowledgeDocument(id: number): Promise<KnowledgeDoc
 export async function archiveKnowledgeDocument(id: number): Promise<KnowledgeDocument> {
   const response = await http.post<{ data: KnowledgeDocument }>(`/knowledge-documents/${id}/archive`)
   return response.data.data
+}
+
+export async function uploadKnowledgeDocumentFile(documentId: number, file: File): Promise<void> {
+  const formData = new FormData()
+  formData.append('file', file)
+  await http.post(`/knowledge-documents/${documentId}/files`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}
+
+export async function importKnowledgeDocumentUrl(payload: ImportUrlPayload): Promise<void> {
+  await http.post('/knowledge-documents/import-url', payload)
 }
