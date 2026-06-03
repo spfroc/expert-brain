@@ -33,6 +33,14 @@ export interface ImportUrlPayload {
   source_type?: 'url' | 'policy' | 'platform_doc' | 'notice'
 }
 
+export interface EmbedDocumentResult {
+  embedded_count: number
+  provider?: string | null
+  model?: string | null
+  dimension?: number | null
+  message?: string | null
+}
+
 export async function listKnowledgeBases(params: ListParams = {}): Promise<PaginatedResponse<KnowledgeBase>> {
   const response = await http.get<PaginatedResponse<KnowledgeBase>>('/knowledge-bases', { params })
   return response.data
@@ -114,4 +122,9 @@ export async function processDocumentIngestionJob(id: number): Promise<DocumentI
 export async function listDocumentChunks(documentId: number, params: ListParams = {}): Promise<PaginatedResponse<DocumentChunk>> {
   const response = await http.get<PaginatedResponse<DocumentChunk>>(`/knowledge-documents/${documentId}/chunks`, { params })
   return response.data
+}
+
+export async function embedKnowledgeDocument(documentId: number): Promise<EmbedDocumentResult> {
+  const response = await http.post<{ data: EmbedDocumentResult }>(`/knowledge-documents/${documentId}/embed`)
+  return response.data.data
 }
