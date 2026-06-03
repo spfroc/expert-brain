@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: expert_brain
       POSTGRES_PASSWORD: expert_brain
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./deployment/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -23,7 +23,7 @@ services:
     container_name: expert-brain-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "16379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -39,7 +39,7 @@ services:
     env_file:
       - ./backend/.env
     ports:
-      - "8080:8080"
+      - "18080:8080"
     volumes:
       - ./backend:/var/www/html
     depends_on:
@@ -58,7 +58,7 @@ services:
     env_file:
       - ./ai-service/.env.example
     ports:
-      - "8000:8000"
+      - "18000:8000"
     volumes:
       - ./ai-service:/app
     depends_on:
@@ -74,7 +74,7 @@ services:
     working_dir: /app
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "15173:5173"
     volumes:
       - ./frontend:/app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
