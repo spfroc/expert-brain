@@ -8,6 +8,7 @@ use App\Http\Resources\DocumentIngestionJobResource;
 use App\Models\DocumentFile;
 use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
+use App\Services\DocumentIngestion\DocumentIngestionProcessor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -101,5 +102,10 @@ class DocumentIngestionController extends Controller
             'message' => 'ok',
             'errors' => null,
         ], 201);
+    }
+
+    public function process(DocumentIngestionJob $documentIngestionJob, DocumentIngestionProcessor $processor): DocumentIngestionJobResource
+    {
+        return new DocumentIngestionJobResource($processor->process($documentIngestionJob));
     }
 }
