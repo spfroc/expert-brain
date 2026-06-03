@@ -4,6 +4,7 @@ import AdminLayout from '@/layouts/AdminLayout.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import LoginView from '@/views/LoginView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
+import KnowledgeCenterView from '@/views/knowledge/KnowledgeCenterView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 export const router = createRouter({
@@ -33,7 +34,7 @@ export const router = createRouter({
         {
           path: 'knowledge/documents',
           name: 'knowledge-documents',
-          component: PlaceholderView,
+          component: KnowledgeCenterView,
           meta: { title: '知识中心', permission: 'knowledge_document.view' }
         },
         {
