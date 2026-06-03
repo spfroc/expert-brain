@@ -1,5 +1,5 @@
 import { http } from './http'
-import type { DocumentIngestionJob, KnowledgeBase, KnowledgeDocument, KnowledgeTag, PaginatedResponse } from '@/types/knowledge'
+import type { DocumentChunk, DocumentIngestionJob, KnowledgeBase, KnowledgeDocument, KnowledgeTag, PaginatedResponse } from '@/types/knowledge'
 
 export interface ListParams {
   keyword?: string
@@ -109,4 +109,9 @@ export async function listDocumentIngestionJobs(params: ListParams = {}): Promis
 export async function processDocumentIngestionJob(id: number): Promise<DocumentIngestionJob> {
   const response = await http.post<{ data: DocumentIngestionJob }>(`/document-ingestion-jobs/${id}/process`)
   return response.data.data
+}
+
+export async function listDocumentChunks(documentId: number, params: ListParams = {}): Promise<PaginatedResponse<DocumentChunk>> {
+  const response = await http.get<PaginatedResponse<DocumentChunk>>(`/knowledge-documents/${documentId}/chunks`, { params })
+  return response.data
 }
