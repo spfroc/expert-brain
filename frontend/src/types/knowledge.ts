@@ -58,3 +58,20 @@ export interface KnowledgeDocument {
   created_at?: string | null
   updated_at?: string | null
 }
+
+export interface DocumentIngestionJob {
+  id: number
+  knowledge_document_id: number
+  document_file_id?: number | null
+  job_type: string
+  status: string
+  progress: number
+  source_url?: string | null
+  error_message?: string | null
+  metadata?: Record<string, unknown> | null
+  started_at?: string | null
+  finished_at?: string | null
+  created_by?: number | null
+  created_at?: string | null
+  updated_at?: string | null
+}
