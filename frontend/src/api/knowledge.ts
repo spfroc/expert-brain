@@ -7,6 +7,7 @@ export interface ListParams {
   job_type?: string
   knowledge_base_id?: number | string
   knowledge_document_id?: number | string
+  page?: number
   per_page?: number
 }
 
