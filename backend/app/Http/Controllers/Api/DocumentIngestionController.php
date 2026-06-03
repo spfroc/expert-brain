@@ -11,11 +11,33 @@ use App\Models\KnowledgeDocument;
 use App\Services\DocumentIngestion\DocumentIngestionProcessor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class DocumentIngestionController extends Controller
 {
+    public function index(Request $request): AnonymousResourceCollection
+    {
+        $query = DocumentIngestionJob::query()
+            ->with(['document:id,title,knowledge_base_id', 'file:id,original_name'])
+            ->latest('id');
+
+        if ($status = $request->string('status')->toString()) {
+            $query->where('status', $status);
+        }
+
+        if ($jobType = $request->string('job_type')->toString()) {
+            $query->where('job_type', $jobType);
+        }
+
+        if ($documentId = $request->integer('knowledge_document_id')) {
+            $query->where('knowledge_document_id', $documentId);
+        }
+
+        return DocumentIngestionJobResource::collection($query->paginate($request->integer('per_page', 20)));
+    }
+
     public function uploadFile(Request $request, KnowledgeDocument $knowledgeDocument): JsonResponse
     {
         $validated = $request->validate([
