@@ -43,6 +43,7 @@ const auth = useAuthStore()
 const menuItems = [
   { path: '/dashboard', label: '工作台', permission: 'dashboard.view' },
   { path: '/knowledge/documents', label: '知识中心', permission: 'knowledge_document.view' },
+  { path: '/tasks', label: '任务中心', permission: 'knowledge_document.reindex' },
   { path: '/rag/chat', label: 'AI 问答', permission: 'rag.ask' },
   { path: '/customers', label: '客户中心', permission: 'customer.view' },
   { path: '/rules', label: '规则中心', permission: 'business_rule.view' },
