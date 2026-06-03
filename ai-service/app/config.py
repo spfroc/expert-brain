@@ -16,7 +16,9 @@ class Settings(BaseSettings):
 
     embedding_provider: str = "mock"
     embedding_model: str = "mock-embedding-1024"
+    embedding_model_path: str | None = None
     embedding_dimension: int = 1024
+    embedding_device: str = "cpu"
 
     llm_provider: str = "mock"
     llm_base_url: str | None = None
