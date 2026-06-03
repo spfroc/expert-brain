@@ -1,10 +1,12 @@
 import { http } from './http'
-import type { KnowledgeBase, KnowledgeDocument, KnowledgeTag, PaginatedResponse } from '@/types/knowledge'
+import type { DocumentIngestionJob, KnowledgeBase, KnowledgeDocument, KnowledgeTag, PaginatedResponse } from '@/types/knowledge'
 
 export interface ListParams {
   keyword?: string
   status?: string
+  job_type?: string
   knowledge_base_id?: number | string
+  knowledge_document_id?: number | string
   per_page?: number
 }
 
@@ -96,4 +98,14 @@ export async function uploadKnowledgeDocumentFile(documentId: number, file: File
 
 export async function importKnowledgeDocumentUrl(payload: ImportUrlPayload): Promise<void> {
   await http.post('/knowledge-documents/import-url', payload)
+}
+
+export async function listDocumentIngestionJobs(params: ListParams = {}): Promise<PaginatedResponse<DocumentIngestionJob>> {
+  const response = await http.get<PaginatedResponse<DocumentIngestionJob>>('/document-ingestion-jobs', { params })
+  return response.data
+}
+
+export async function processDocumentIngestionJob(id: number): Promise<DocumentIngestionJob> {
+  const response = await http.post<{ data: DocumentIngestionJob }>(`/document-ingestion-jobs/${id}/process`)
+  return response.data.data
 }
