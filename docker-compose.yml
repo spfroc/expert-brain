@@ -73,6 +73,8 @@ services:
     container_name: expert-brain-frontend
     working_dir: /app
     restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:18080/api/v1
     ports:
       - "15173:5173"
     volumes:
