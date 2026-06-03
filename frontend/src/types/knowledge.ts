@@ -75,3 +75,17 @@ export interface DocumentIngestionJob {
   created_at?: string | null
   updated_at?: string | null
 }
+
+export interface DocumentChunk {
+  id: number
+  knowledge_document_id: number
+  document_file_id?: number | null
+  chunk_index: number
+  chunk_type: string
+  title?: string | null
+  content: string
+  token_count?: number | null
+  metadata?: Record<string, unknown> | null
+  created_at?: string | null
+  updated_at?: string | null
+}
