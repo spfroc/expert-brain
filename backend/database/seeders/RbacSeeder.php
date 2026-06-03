@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -11,6 +12,8 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RbacSeeder extends Seeder
 {
+    private string $guardName = 'web';
+
     /**
      * @var array<int, string>
      */
@@ -69,18 +72,21 @@ class RbacSeeder extends Seeder
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         foreach ($this->permissions as $permission) {
-            Permission::findOrCreate($permission, 'web');
+            Permission::query()->firstOrCreate([
+                'name' => $permission,
+                'guard_name' => $this->guardName,
+            ]);
         }
 
-        $superAdmin = Role::findOrCreate('super-admin', 'web');
-        $knowledgeAdmin = Role::findOrCreate('knowledge-admin', 'web');
-        $businessUser = Role::findOrCreate('business-user', 'web');
-        $manager = Role::findOrCreate('manager', 'web');
-        $readonly = Role::findOrCreate('readonly', 'web');
+        $superAdmin = Role::query()->firstOrCreate(['name' => 'super-admin', 'guard_name' => $this->guardName]);
+        $knowledgeAdmin = Role::query()->firstOrCreate(['name' => 'knowledge-admin', 'guard_name' => $this->guardName]);
+        $businessUser = Role::query()->firstOrCreate(['name' => 'business-user', 'guard_name' => $this->guardName]);
+        $manager = Role::query()->firstOrCreate(['name' => 'manager', 'guard_name' => $this->guardName]);
+        $readonly = Role::query()->firstOrCreate(['name' => 'readonly', 'guard_name' => $this->guardName]);
 
-        $superAdmin->syncPermissions($this->permissions);
+        $superAdmin->syncPermissions($this->permissionModels($this->permissions));
 
-        $knowledgeAdmin->syncPermissions([
+        $knowledgeAdmin->syncPermissions($this->permissionModels([
             'dashboard.view',
             'knowledge_base.view',
             'knowledge_base.create',
@@ -96,9 +102,9 @@ class RbacSeeder extends Seeder
             'case.create',
             'case.update',
             'case.publish',
-        ]);
+        ]));
 
-        $businessUser->syncPermissions([
+        $businessUser->syncPermissions($this->permissionModels([
             'dashboard.view',
             'knowledge_document.view',
             'rag.ask',
@@ -111,9 +117,9 @@ class RbacSeeder extends Seeder
             'plan.view',
             'plan.update_own',
             'case.view',
-        ]);
+        ]));
 
-        $manager->syncPermissions([
+        $manager->syncPermissions($this->permissionModels([
             'dashboard.view',
             'knowledge_document.view',
             'customer.view',
@@ -121,14 +127,14 @@ class RbacSeeder extends Seeder
             'case.view',
             'report.view',
             'audit.view',
-        ]);
+        ]));
 
-        $readonly->syncPermissions([
+        $readonly->syncPermissions($this->permissionModels([
             'dashboard.view',
             'knowledge_document.view',
             'customer.view',
             'case.view',
-        ]);
+        ]));
 
         $admin = User::query()->firstOrCreate(
             ['email' => 'admin@example.com'],
@@ -140,5 +146,19 @@ class RbacSeeder extends Seeder
         );
 
         $admin->assignRole($superAdmin);
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+    }
+
+    /**
+     * @param array<int, string> $names
+     * @return Collection<int, Permission>
+     */
+    private function permissionModels(array $names): Collection
+    {
+        return Permission::query()
+            ->where('guard_name', $this->guardName)
+            ->whereIn('name', $names)
+            ->get();
     }
 }
