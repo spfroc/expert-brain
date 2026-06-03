@@ -8,6 +8,7 @@ use App\Http\Resources\DocumentIngestionJobResource;
 use App\Models\DocumentFile;
 use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
+use App\Services\DocumentIngestion\DocumentEmbeddingService;
 use App\Services\DocumentIngestion\DocumentIngestionProcessor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -129,5 +130,15 @@ class DocumentIngestionController extends Controller
     public function process(DocumentIngestionJob $documentIngestionJob, DocumentIngestionProcessor $processor): DocumentIngestionJobResource
     {
         return new DocumentIngestionJobResource($processor->process($documentIngestionJob));
+    }
+
+    public function embed(KnowledgeDocument $knowledgeDocument, DocumentEmbeddingService $embeddingService): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $embeddingService->embedDocumentChunks($knowledgeDocument->id),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
     }
 }
