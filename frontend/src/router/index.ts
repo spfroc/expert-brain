@@ -5,6 +5,7 @@ import DashboardView from '@/views/DashboardView.vue'
 import LoginView from '@/views/LoginView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
 import KnowledgeCenterView from '@/views/knowledge/KnowledgeCenterView.vue'
+import RagChatView from '@/views/rag/RagChatView.vue'
 import TaskCenterView from '@/views/tasks/TaskCenterView.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -47,7 +48,7 @@ export const router = createRouter({
         {
           path: 'rag/chat',
           name: 'rag-chat',
-          component: PlaceholderView,
+          component: RagChatView,
           meta: { title: 'AI 问答', permission: 'rag.ask' }
         },
         {
