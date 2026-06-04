@@ -40,8 +40,12 @@ class DocumentIngestionController extends Controller
         return DocumentIngestionJobResource::collection($query->paginate($request->integer('per_page', 20)));
     }
 
-    public function uploadFile(Request $request, KnowledgeDocument $knowledgeDocument): JsonResponse
-    {
+    public function uploadFile(
+        Request $request,
+        KnowledgeDocument $knowledgeDocument,
+        DocumentIngestionProcessor $processor,
+        DocumentEmbeddingService $embeddingService
+    ): JsonResponse {
         $validated = $request->validate([
             'file' => ['required', 'file', 'max:51200'],
         ]);
@@ -72,18 +76,29 @@ class DocumentIngestionController extends Controller
             'metadata' => [
                 'original_name' => $file->original_name,
                 'mime_type' => $file->mime_type,
+                'auto_process' => true,
             ],
         ]);
 
+        $processedJob = $processor->process($job);
+        $embeddingResult = null;
+
+        if ($processedJob->status === 'completed') {
+            $embeddingResult = $embeddingService->embedDocumentChunks($knowledgeDocument->id);
+        }
+
         return response()->json([
-            'success' => true,
+            'success' => $processedJob->status === 'completed',
             'data' => [
                 'file' => new DocumentFileResource($file),
-                'job' => new DocumentIngestionJobResource($job),
+                'job' => new DocumentIngestionJobResource($processedJob),
+                'embedding' => $embeddingResult,
             ],
-            'message' => 'ok',
-            'errors' => null,
-        ], 201);
+            'message' => $processedJob->status === 'completed' ? 'uploaded, parsed, chunked and embedded' : 'upload succeeded but ingestion failed',
+            'errors' => $processedJob->status === 'completed' ? null : [
+                'ingestion' => [$processedJob->error_message],
+            ],
+        ], $processedJob->status === 'completed' ? 201 : 422);
     }
 
     public function importUrl(Request $request): JsonResponse
