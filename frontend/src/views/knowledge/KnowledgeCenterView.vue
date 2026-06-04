@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold">知识中心</h1>
-        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档，支持手工录入、文件上传、链接导入、切片查看和向量化。</p>
+        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档，支持正文生成切片、一键入库、文件上传、链接导入。</p>
       </div>
       <div class="flex gap-2">
         <el-button @click="openTagDialog">新增标签</el-button>
@@ -14,7 +14,7 @@
     </div>
 
     <el-alert
-      title="文件或链接入库后，请先到任务中心执行解析任务；生成切片后，再点击文档行内的“向量化”。"
+      title="手工正文保存后可直接点击“一键入库”；文件或链接导入后仍可到任务中心执行解析任务，再向量化。"
       type="info"
       show-icon
       :closable="false"
@@ -34,14 +34,10 @@
             <el-table-column prop="name" label="名称" min-width="160" />
             <el-table-column prop="industry" label="行业" width="100" />
             <el-table-column label="状态" width="90">
-              <template #default="scope">
-                <el-tag>{{ scope.row.status ?? 'active' }}</el-tag>
-              </template>
+              <template #default="scope"><el-tag>{{ scope.row.status ?? 'active' }}</el-tag></template>
             </el-table-column>
             <el-table-column label="操作" width="90">
-              <template #default="scope">
-                <el-button link type="primary" @click.stop="openBaseDialog(scope.row)">编辑</el-button>
-              </template>
+              <template #default="scope"><el-button link type="primary" @click.stop="openBaseDialog(scope.row)">编辑</el-button></template>
             </el-table-column>
           </el-table>
         </el-card>
@@ -63,22 +59,17 @@
             <el-table-column prop="title" label="标题" min-width="220" />
             <el-table-column prop="source_type" label="来源" width="110" />
             <el-table-column prop="status" label="状态" width="100">
-              <template #default="scope">
-                <el-tag>{{ scope.row.status }}</el-tag>
-              </template>
+              <template #default="scope"><el-tag>{{ scope.row.status }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column label="操作" width="450">
+            <el-table-column label="操作" width="620">
               <template #default="scope">
                 <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
                 <el-button link type="info" @click="openUploadDialog(scope.row)">上传文件</el-button>
                 <el-button link type="primary" @click="openChunksDialog(scope.row)">切片</el-button>
-                <el-button
-                  link
-                  type="danger"
-                  :loading="embeddingDocumentId === scope.row.id"
-                  @click="embedDocument(scope.row.id)"
-                >向量化</el-button>
+                <el-button link type="primary" :loading="chunkingDocumentId === scope.row.id" @click="chunkDocument(scope.row.id)">生成切片</el-button>
+                <el-button link type="danger" :loading="embeddingDocumentId === scope.row.id" @click="embedDocument(scope.row.id)">向量化</el-button>
+                <el-button link type="danger" :loading="indexingDocumentId === scope.row.id" @click="indexDocument(scope.row.id)">一键入库</el-button>
                 <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
                 <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
               </template>
@@ -155,13 +146,7 @@
     </el-dialog>
 
     <el-dialog v-model="uploadDialogVisible" title="上传文件并创建入库任务" width="560px">
-      <el-alert
-        title="支持先上传 docx、pdf、xlsx、txt、md 等文件。当前阶段会保存原始文件并创建解析任务，解析任务将在 AI Service 中执行。"
-        type="info"
-        show-icon
-        :closable="false"
-        class="mb-4"
-      />
+      <el-alert title="上传后会创建解析任务，请到任务中心执行；或者后续可扩展为自动执行。" type="info" show-icon :closable="false" class="mb-4" />
       <el-upload drag :auto-upload="false" :limit="1" :on-change="handleFileChange" :on-remove="handleFileRemove">
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到这里，或点击选择文件</div>
@@ -222,11 +207,13 @@ import { ElMessage, type UploadFile } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import {
   archiveKnowledgeDocument,
+  chunkKnowledgeDocument,
   createKnowledgeBase,
   createKnowledgeDocument,
   createKnowledgeTag,
   embedKnowledgeDocument,
   importKnowledgeDocumentUrl,
+  indexKnowledgeDocument,
   listDocumentChunks,
   listKnowledgeBases,
   listKnowledgeDocuments,
@@ -252,7 +239,9 @@ const savingTag = ref(false)
 const savingDocument = ref(false)
 const uploadingFile = ref(false)
 const importingUrl = ref(false)
+const chunkingDocumentId = ref<number | null>(null)
 const embeddingDocumentId = ref<number | null>(null)
+const indexingDocumentId = ref<number | null>(null)
 
 const baseDialogVisible = ref(false)
 const tagDialogVisible = ref(false)
@@ -297,10 +286,7 @@ async function selectBase(row: KnowledgeBase): Promise<void> { selectedBaseId.va
 
 function openBaseDialog(row?: KnowledgeBase): void {
   resetBaseForm()
-  if (row) {
-    editingBase.value = row
-    Object.assign(baseForm, { name: row.name, industry: row.industry ?? '', description: row.description ?? '', status: row.status ?? 'active' })
-  }
+  if (row) { editingBase.value = row; Object.assign(baseForm, { name: row.name, industry: row.industry ?? '', description: row.description ?? '', status: row.status ?? 'active' }) }
   baseDialogVisible.value = true
 }
 
@@ -320,10 +306,7 @@ async function saveTag(): Promise<void> { savingTag.value = true; try { await cr
 
 function openDocumentDialog(row?: KnowledgeDocument): void {
   resetDocumentForm()
-  if (row) {
-    editingDocument.value = row
-    Object.assign(documentForm, { knowledge_base_id: row.knowledge_base_id, title: row.title, summary: row.summary ?? '', content: row.content ?? '', source_type: row.source_type ?? 'manual', source_url: row.source_url ?? '', version: row.version ?? '1.0', status: row.status ?? 'draft' })
-  }
+  if (row) { editingDocument.value = row; Object.assign(documentForm, { knowledge_base_id: row.knowledge_base_id, title: row.title, summary: row.summary ?? '', content: row.content ?? '', source_type: row.source_type ?? 'manual', source_url: row.source_url ?? '', version: row.version ?? '1.0', status: row.status ?? 'draft' }) }
   documentDialogVisible.value = true
 }
 
@@ -347,11 +330,7 @@ async function submitFileUpload(): Promise<void> {
   if (!uploadingDocument.value) { ElMessage.warning('请先选择文档'); return }
   if (!selectedUploadFile.value) { ElMessage.warning('请选择文件'); return }
   uploadingFile.value = true
-  try {
-    await uploadKnowledgeDocumentFile(uploadingDocument.value.id, selectedUploadFile.value)
-    ElMessage.success('文件已上传，解析任务已创建')
-    uploadDialogVisible.value = false
-  } finally { uploadingFile.value = false }
+  try { await uploadKnowledgeDocumentFile(uploadingDocument.value.id, selectedUploadFile.value); ElMessage.success('文件已上传，解析任务已创建'); uploadDialogVisible.value = false } finally { uploadingFile.value = false }
 }
 
 function openUrlImportDialog(): void { Object.assign(urlForm, { knowledge_base_id: selectedBaseId.value, title: '', url: '', source_type: 'url' }); urlDialogVisible.value = true }
@@ -359,12 +338,7 @@ async function submitUrlImport(): Promise<void> {
   if (!urlForm.knowledge_base_id) { ElMessage.warning('请先选择知识库'); return }
   if (!urlForm.url) { ElMessage.warning('请输入链接'); return }
   importingUrl.value = true
-  try {
-    await importKnowledgeDocumentUrl(urlForm)
-    ElMessage.success('链接已导入，抓取任务已创建')
-    urlDialogVisible.value = false
-    await loadDocuments()
-  } finally { importingUrl.value = false }
+  try { await importKnowledgeDocumentUrl(urlForm); ElMessage.success('链接已导入，抓取任务已创建'); urlDialogVisible.value = false; await loadDocuments() } finally { importingUrl.value = false }
 }
 
 async function openChunksDialog(row: KnowledgeDocument): Promise<void> { chunkDocument.value = row; chunkKeyword.value = ''; chunkPagination.current_page = 1; chunksDialogVisible.value = true; await loadChunks() }
@@ -379,14 +353,22 @@ async function loadChunks(): Promise<void> {
 }
 function handleChunkPageChange(page: number): void { chunkPagination.current_page = page; void loadChunks() }
 
+async function chunkDocument(id: number): Promise<void> {
+  chunkingDocumentId.value = id
+  try { const result = await chunkKnowledgeDocument(id); ElMessage.success(`生成切片完成：${result.chunk_count} 个`) } finally { chunkingDocumentId.value = null }
+}
+
 async function embedDocument(id: number): Promise<void> {
   embeddingDocumentId.value = id
+  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`) } finally { embeddingDocumentId.value = null }
+}
+
+async function indexDocument(id: number): Promise<void> {
+  indexingDocumentId.value = id
   try {
-    const result = await embedKnowledgeDocument(id)
-    ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`)
-  } finally {
-    embeddingDocumentId.value = null
-  }
+    const result = await indexKnowledgeDocument(id)
+    ElMessage.success(`一键入库完成：切片 ${result.chunk.chunk_count} 个，向量 ${result.embedding.embedded_count} 个`)
+  } finally { indexingDocumentId.value = null }
 }
 
 async function publishDocument(id: number): Promise<void> { await publishKnowledgeDocument(id); ElMessage.success('文档已发布'); await loadDocuments() }
