@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AiModelController;
 use App\Http\Controllers\Api\DocumentChunkController;
 use App\Http\Controllers\Api\DocumentIngestionController;
 use App\Http\Controllers\Api\KnowledgeBaseController;
@@ -21,6 +22,12 @@ Route::prefix('v1')->group(function (): void {
     Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('/session', [SessionController::class, 'show']);
         Route::delete('/session', [SessionController::class, 'destroy']);
+
+        Route::apiResource('ai-models', AiModelController::class)->except(['show', 'destroy']);
+        Route::post('ai-models/install-recommended', [AiModelController::class, 'installRecommended']);
+        Route::post('ai-models/{aiModel}/activate', [AiModelController::class, 'activate']);
+        Route::post('ai-models/{aiModel}/check', [AiModelController::class, 'check']);
+        Route::get('ai-models/{aiModel}/events', [AiModelController::class, 'events']);
 
         Route::apiResource('knowledge-bases', KnowledgeBaseController::class);
         Route::apiResource('knowledge-categories', KnowledgeCategoryController::class);
