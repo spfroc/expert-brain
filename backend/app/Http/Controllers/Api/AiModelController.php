@@ -7,12 +7,11 @@ use App\Models\AiModel;
 use App\Services\AiModel\AiModelRegistryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
 
 class AiModelController extends Controller
 {
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = AiModel::query()->latest('id');
 
@@ -24,7 +23,12 @@ class AiModelController extends Controller
             $query->where('status', $status);
         }
 
-        return \App\Http\Resources\JsonResource::collection($query->paginate($request->integer('per_page', 50)));
+        return response()->json([
+            'success' => true,
+            'data' => $query->paginate($request->integer('per_page', 50)),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
     }
 
     public function store(Request $request): JsonResponse
