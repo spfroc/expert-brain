@@ -2,11 +2,11 @@
   <div class="space-y-4">
     <div>
       <h1 class="text-2xl font-semibold">AI 问答</h1>
-      <p class="text-slate-500 mt-1">当前阶段先测试 RAG 召回效果：输入问题后，系统返回最相关的知识切片。</p>
+      <p class="text-slate-500 mt-1">当前阶段先测试 RAG 召回效果：输入问题后，系统返回相关知识切片，并生成一个基于切片的回答草稿。</p>
     </div>
 
     <el-alert
-      title="当前还没有接入 LLM 生成回答，页面展示的是向量检索召回结果。检索结果稳定后，再接入回答生成。"
+      title="当前回答草稿不是大模型生成，而是直接基于召回切片整理。用于验证知识是否被正确召回。"
       type="info"
       show-icon
       :closable="false"
@@ -36,6 +36,18 @@
       </el-form>
     </el-card>
 
+    <el-card v-if="searched">
+      <template #header>
+        <div class="font-semibold">回答草稿</div>
+      </template>
+
+      <div v-if="results.length > 0" class="space-y-3">
+        <p class="text-slate-700">根据当前知识库召回结果，可以先这样回答：</p>
+        <div class="whitespace-pre-wrap leading-7 bg-slate-50 border rounded p-4">{{ answerDraft }}</div>
+      </div>
+      <el-empty v-else description="没有检索到结果，请确认文档已生成切片并完成向量化。" />
+    </el-card>
+
     <el-card v-if="results.length > 0">
       <template #header>
         <div class="font-semibold">召回结果</div>
@@ -43,9 +55,9 @@
 
       <div class="space-y-4">
         <div v-for="item in results" :key="item.chunk_id" class="border rounded p-4 bg-white">
-          <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center justify-between mb-2 gap-4">
             <div class="font-semibold">{{ item.document_title }}</div>
-            <div class="text-sm text-slate-500">
+            <div class="text-sm text-slate-500 shrink-0">
               chunk #{{ item.chunk_index }} / score {{ item.score.toFixed(4) }} / distance {{ item.distance.toFixed(4) }}
             </div>
           </div>
@@ -54,16 +66,14 @@
         </div>
       </div>
     </el-card>
-
-    <el-empty v-else-if="searched" description="没有检索到结果，请确认文档已解析并完成向量化。" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listKnowledgeBases, searchRag } from '@/api/knowledge'
-import type { KnowledgeBase, RagSearchResult } from '@/api/knowledge'
+import { listKnowledgeBases, searchRag, type RagSearchResult } from '@/api/knowledge'
+import type { KnowledgeBase } from '@/types/knowledge'
 
 const bases = ref<KnowledgeBase[]>([])
 const selectedBaseId = ref<number | null>(null)
@@ -72,6 +82,23 @@ const topK = ref(5)
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<RagSearchResult[]>([])
+
+const answerDraft = computed(() => {
+  if (results.value.length === 0) return ''
+
+  const lines = results.value.slice(0, 3).map((item, index) => {
+    return `${index + 1}. ${item.content}`
+  })
+
+  return [
+    `问题：${query.value}`,
+    '',
+    '参考知识：',
+    ...lines,
+    '',
+    '说明：以上内容来自当前知识库召回切片，后续接入大模型后会在这些依据上生成更自然的业务回答。'
+  ].join('\n')
+})
 
 async function loadBases(): Promise<void> {
   const response = await listKnowledgeBases({ per_page: 100 })
