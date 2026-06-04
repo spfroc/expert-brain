@@ -45,6 +45,7 @@ const menuItems = [
   { path: '/knowledge/documents', label: '知识中心', permission: 'knowledge_document.view' },
   { path: '/tasks', label: '任务中心', permission: 'knowledge_document.reindex' },
   { path: '/rag/chat', label: 'AI 问答', permission: 'rag.ask' },
+  { path: '/system/models', label: '模型管理', permission: 'system.setting.view' },
   { path: '/customers', label: '客户中心', permission: 'customer.view' },
   { path: '/rules', label: '规则中心', permission: 'business_rule.view' },
   { path: '/plans', label: '方案中心', permission: 'plan.view' },
