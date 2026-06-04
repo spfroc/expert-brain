@@ -19,10 +19,14 @@ class ImportLocalPolicyFiles extends Command
         {--path= : Directory containing PDF/DOCX/TXT/MD files}
         {--base=国家行政法规库 : Knowledge base name}
         {--limit=0 : Max files to import, 0 means all}
+        {--offset=0 : Number of matched files to skip before importing}
         {--pattern=*.pdf : File pattern, for example *.pdf or *.docx}
+        {--force : Re-import documents that already have embedded chunks}
+        {--no-embed : Parse and chunk only, do not generate embeddings}
+        {--fail-log= : CSV file path for failed imports}
         {--dry-run : Only print files, do not import}';
 
-    protected $description = 'Import local policy/regulation files, parse them, create chunks, and embed them.';
+    protected $description = 'Import local policy/regulation files, parse them, create chunks, and optionally embed them.';
 
     public function handle(DocumentIngestionProcessor $processor, DocumentEmbeddingService $embeddingService): int
     {
@@ -34,8 +38,12 @@ class ImportLocalPolicyFiles extends Command
 
         $baseName = $this->stringOption('base', '国家行政法规库');
         $limit = max(0, (int) $this->stringOption('limit', '0'));
+        $offset = max(0, (int) $this->stringOption('offset', '0'));
         $pattern = $this->stringOption('pattern', '*.pdf');
         $dryRun = (bool) $this->option('dry-run');
+        $force = (bool) $this->option('force');
+        $noEmbed = (bool) $this->option('no-embed');
+        $failLog = $this->stringOption('fail-log');
 
         $finder = Finder::create()
             ->files()
@@ -43,7 +51,8 @@ class ImportLocalPolicyFiles extends Command
             ->name($pattern)
             ->sortByName();
 
-        $files = iterator_to_array($finder, false);
+        $allFiles = iterator_to_array($finder, false);
+        $files = $offset > 0 ? array_slice($allFiles, $offset) : $allFiles;
         if ($limit > 0) {
             $files = array_slice($files, 0, $limit);
         }
@@ -53,11 +62,12 @@ class ImportLocalPolicyFiles extends Command
             return self::SUCCESS;
         }
 
-        $this->info('Found '.count($files).' file(s).');
+        $this->info('Matched '.count($allFiles).' file(s).');
+        $this->info('Selected '.count($files).' file(s). offset='.$offset.', limit='.$limit.', pattern='.$pattern);
 
         if ($dryRun) {
-            foreach ($files as $file) {
-                $this->line($file->getRealPath());
+            foreach ($files as $index => $file) {
+                $this->line(sprintf('%d %s', $offset + $index + 1, $file->getRealPath()));
             }
             return self::SUCCESS;
         }
@@ -73,7 +83,9 @@ class ImportLocalPolicyFiles extends Command
         );
 
         $imported = 0;
+        $skipped = 0;
         $failed = 0;
+        $failures = [];
 
         foreach ($files as $file) {
             $realPath = $file->getRealPath();
@@ -83,6 +95,20 @@ class ImportLocalPolicyFiles extends Command
             $this->line("Importing: {$originalName}");
 
             try {
+                $existingDocument = KnowledgeDocument::query()
+                    ->where('knowledge_base_id', $base->id)
+                    ->where('title', $title)
+                    ->first();
+
+                if ($existingDocument && ! $force) {
+                    $embeddedCount = $existingDocument->chunks()->whereNotNull('embedding')->count();
+                    if ($embeddedCount > 0) {
+                        $this->warn("  skipped: already embedded chunks={$embeddedCount}. Use --force to re-import.");
+                        $skipped++;
+                        continue;
+                    }
+                }
+
                 $document = KnowledgeDocument::query()->updateOrCreate(
                     [
                         'knowledge_base_id' => $base->id,
@@ -97,6 +123,7 @@ class ImportLocalPolicyFiles extends Command
                             'importer' => 'knowledge:import-local-policy-files',
                             'original_path' => $realPath,
                             'original_name' => $originalName,
+                            'imported_at' => now()->toISOString(),
                         ],
                     ]
                 );
@@ -136,16 +163,34 @@ class ImportLocalPolicyFiles extends Command
                     throw new \RuntimeException($processedJob->error_message ?: 'Parse failed.');
                 }
 
-                $embedding = $embeddingService->embedDocumentChunks($document->id);
-                $this->info("  ok: chunks={$embedding['embedded_count']}");
+                if ($noEmbed) {
+                    $chunkCount = $document->chunks()->count();
+                    $this->info("  ok: chunks={$chunkCount}, embedding=skipped");
+                } else {
+                    $embedding = $embeddingService->embedDocumentChunks($document->id);
+                    $this->info("  ok: chunks={$embedding['embedded_count']}");
+                }
+
                 $imported++;
             } catch (\Throwable $exception) {
-                $this->error('  failed: '.$exception->getMessage());
+                $message = $exception->getMessage();
+                $this->error('  failed: '.$message);
                 $failed++;
+                $failures[] = [
+                    'filename' => $originalName,
+                    'title' => $title,
+                    'path' => $realPath,
+                    'error' => $message,
+                ];
             }
         }
 
-        $this->info("Done. imported={$imported}, failed={$failed}");
+        if ($failLog !== '' && $failures !== []) {
+            $this->writeFailureCsv($failLog, $failures);
+            $this->warn('Failure log written to: '.$failLog);
+        }
+
+        $this->info("Done. imported={$imported}, skipped={$skipped}, failed={$failed}");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
@@ -181,5 +226,22 @@ class ImportLocalPolicyFiles extends Command
             'md' => 'text/markdown',
             default => mime_content_type($path) ?: 'application/octet-stream',
         };
+    }
+
+    /**
+     * @param array<int, array<string, string>> $failures
+     */
+    private function writeFailureCsv(string $path, array $failures): void
+    {
+        $handle = fopen($path, 'w');
+        if ($handle === false) {
+            throw new \RuntimeException('Unable to write failure log: '.$path);
+        }
+
+        fputcsv($handle, ['filename', 'title', 'path', 'error']);
+        foreach ($failures as $failure) {
+            fputcsv($handle, [$failure['filename'], $failure['title'], $failure['path'], $failure['error']]);
+        }
+        fclose($handle);
     }
 }
