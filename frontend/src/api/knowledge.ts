@@ -41,12 +41,24 @@ export interface EmbedDocumentResult {
   message?: string | null
 }
 
+export interface ChunkDocumentResult {
+  chunk_count: number
+  parser?: string | null
+  message?: string | null
+}
+
+export interface IndexDocumentResult {
+  chunk: ChunkDocumentResult
+  embedding: EmbedDocumentResult
+}
+
 export interface RagSearchResult {
   chunk_id: number
   knowledge_document_id: number
   chunk_index: number
   content: string
   token_count?: number | null
+  metadata?: Record<string, unknown> | null
   document_title: string
   source_type?: string | null
   source_url?: string | null
@@ -143,8 +155,18 @@ export async function listDocumentChunks(documentId: number, params: ListParams 
   return response.data
 }
 
+export async function chunkKnowledgeDocument(documentId: number): Promise<ChunkDocumentResult> {
+  const response = await http.post<{ data: ChunkDocumentResult }>(`/knowledge-documents/${documentId}/chunk`)
+  return response.data.data
+}
+
 export async function embedKnowledgeDocument(documentId: number): Promise<EmbedDocumentResult> {
   const response = await http.post<{ data: EmbedDocumentResult }>(`/knowledge-documents/${documentId}/embed`)
+  return response.data.data
+}
+
+export async function indexKnowledgeDocument(documentId: number): Promise<IndexDocumentResult> {
+  const response = await http.post<{ data: IndexDocumentResult }>(`/knowledge-documents/${documentId}/index`)
   return response.data.data
 }
 
