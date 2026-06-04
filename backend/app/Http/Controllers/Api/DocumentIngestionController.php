@@ -10,6 +10,7 @@ use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
 use App\Services\DocumentIngestion\DocumentEmbeddingService;
 use App\Services\DocumentIngestion\DocumentIngestionProcessor;
+use App\Services\DocumentIngestion\ManualDocumentChunkService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -132,11 +133,40 @@ class DocumentIngestionController extends Controller
         return new DocumentIngestionJobResource($processor->process($documentIngestionJob));
     }
 
+    public function chunk(KnowledgeDocument $knowledgeDocument, ManualDocumentChunkService $chunkService): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $chunkService->chunkDocument($knowledgeDocument),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
+    }
+
     public function embed(KnowledgeDocument $knowledgeDocument, DocumentEmbeddingService $embeddingService): JsonResponse
     {
         return response()->json([
             'success' => true,
             'data' => $embeddingService->embedDocumentChunks($knowledgeDocument->id),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
+    }
+
+    public function indexDocument(
+        KnowledgeDocument $knowledgeDocument,
+        ManualDocumentChunkService $chunkService,
+        DocumentEmbeddingService $embeddingService
+    ): JsonResponse {
+        $chunkResult = $chunkService->chunkDocument($knowledgeDocument);
+        $embedResult = $embeddingService->embedDocumentChunks($knowledgeDocument->id);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'chunk' => $chunkResult,
+                'embedding' => $embedResult,
+            ],
             'message' => 'ok',
             'errors' => null,
         ]);
