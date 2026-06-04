@@ -56,7 +56,7 @@ services:
     container_name: expert-brain-ai-service
     restart: unless-stopped
     env_file:
-      - ./ai-service/.env.example
+      - ./ai-service/.env
     ports:
       - "18000:8000"
     volumes:
