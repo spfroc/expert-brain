@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\KnowledgeBaseController;
 use App\Http\Controllers\Api\KnowledgeCategoryController;
 use App\Http\Controllers\Api\KnowledgeDocumentController;
 use App\Http\Controllers\Api\KnowledgeTagController;
+use App\Http\Controllers\Api\RagController;
 use App\Http\Controllers\Api\SessionController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +35,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('knowledge-documents/import-url', [DocumentIngestionController::class, 'importUrl']);
         Route::get('document-ingestion-jobs', [DocumentIngestionController::class, 'index']);
         Route::post('document-ingestion-jobs/{documentIngestionJob}/process', [DocumentIngestionController::class, 'process']);
+        Route::post('rag/search', [RagController::class, 'search']);
     });
 });
 
