@@ -26,15 +26,15 @@ class ImportLocalPolicyFiles extends Command
 
     public function handle(DocumentIngestionProcessor $processor, DocumentEmbeddingService $embeddingService): int
     {
-        $path = (string) $this->option('path');
+        $path = $this->stringOption('path');
         if ($path === '' || ! is_dir($path)) {
             $this->error('Please provide a valid --path directory.');
             return self::FAILURE;
         }
 
-        $baseName = (string) $this->option('base');
-        $limit = max(0, (int) $this->option('limit'));
-        $pattern = (string) $this->option('pattern');
+        $baseName = $this->stringOption('base', '国家行政法规库');
+        $limit = max(0, (int) $this->stringOption('limit', '0'));
+        $pattern = $this->stringOption('pattern', '*.pdf');
         $dryRun = (bool) $this->option('dry-run');
 
         $finder = Finder::create()
@@ -148,6 +148,21 @@ class ImportLocalPolicyFiles extends Command
         $this->info("Done. imported={$imported}, failed={$failed}");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    private function stringOption(string $name, string $default = ''): string
+    {
+        $value = $this->option($name);
+
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+
+        if ($value === null || $value === false || $value === '') {
+            return $default;
+        }
+
+        return (string) $value;
     }
 
     private function titleFromFilename(string $filename): string
