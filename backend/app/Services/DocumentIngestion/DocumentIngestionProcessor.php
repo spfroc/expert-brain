@@ -121,9 +121,10 @@ class DocumentIngestionProcessor
             ]),
         ])->save();
 
+        // MVP policy: one knowledge document owns one active chunk set.
+        // Re-processing a file, URL, or manual body replaces the previous chunk set.
         DocumentChunk::query()
             ->where('knowledge_document_id', $document->id)
-            ->when($job->document_file_id, fn ($query) => $query->where('document_file_id', $job->document_file_id))
             ->delete();
 
         foreach (($result['chunks'] ?? []) as $chunk) {
