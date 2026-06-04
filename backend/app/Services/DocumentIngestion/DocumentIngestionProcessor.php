@@ -5,6 +5,7 @@ namespace App\Services\DocumentIngestion;
 use App\Models\DocumentChunk;
 use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
@@ -68,15 +69,20 @@ class DocumentIngestionProcessor
             throw new RuntimeException('Stored file does not exist.');
         }
 
-        $response = Http::timeout(60)
+        $response = Http::timeout(120)
             ->attach('file', file_get_contents($path), $file->original_name)
             ->post($this->aiServiceUrl('/documents/parse-file'));
 
         if ($response->failed()) {
-            throw new RuntimeException('AI service parse-file failed: '.$response->body());
+            throw new RuntimeException($this->formatAiServiceError('parse-file', $response));
         }
 
-        return $response->json();
+        $payload = $response->json();
+        if (! is_array($payload)) {
+            throw new RuntimeException('AI service parse-file returned non-JSON response.');
+        }
+
+        return $payload;
     }
 
     /**
@@ -96,10 +102,15 @@ class DocumentIngestionProcessor
             ]);
 
         if ($response->failed()) {
-            throw new RuntimeException('AI service parse-url failed: '.$response->body());
+            throw new RuntimeException($this->formatAiServiceError('parse-url', $response));
         }
 
-        return $response->json();
+        $payload = $response->json();
+        if (! is_array($payload)) {
+            throw new RuntimeException('AI service parse-url returned non-JSON response.');
+        }
+
+        return $payload;
     }
 
     /**
@@ -132,13 +143,28 @@ class DocumentIngestionProcessor
                 'knowledge_document_id' => $document->id,
                 'document_file_id' => $job->document_file_id,
                 'chunk_index' => $chunk['index'],
-                'chunk_type' => 'text',
+                'chunk_type' => $chunk['chunk_type'] ?? 'text',
                 'title' => $chunk['title'] ?? null,
                 'content' => $chunk['content'],
                 'token_count' => $chunk['token_count'] ?? null,
                 'metadata' => $chunk['metadata'] ?? [],
             ]);
         }
+    }
+
+    private function formatAiServiceError(string $operation, Response $response): string
+    {
+        $body = trim($response->body());
+        if ($body === '') {
+            $body = '[empty response body]';
+        }
+
+        return sprintf(
+            'AI service %s failed: HTTP %s %s',
+            $operation,
+            $response->status(),
+            mb_substr($body, 0, 1200)
+        );
     }
 
     private function aiServiceUrl(string $path): string
