@@ -41,6 +41,25 @@ export interface EmbedDocumentResult {
   message?: string | null
 }
 
+export interface RagSearchResult {
+  chunk_id: number
+  knowledge_document_id: number
+  chunk_index: number
+  content: string
+  token_count?: number | null
+  document_title: string
+  source_type?: string | null
+  source_url?: string | null
+  knowledge_base_id: number
+  distance: number
+  score: number
+}
+
+export interface RagSearchResponse {
+  query: string
+  results: RagSearchResult[]
+}
+
 export async function listKnowledgeBases(params: ListParams = {}): Promise<PaginatedResponse<KnowledgeBase>> {
   const response = await http.get<PaginatedResponse<KnowledgeBase>>('/knowledge-bases', { params })
   return response.data
@@ -126,5 +145,14 @@ export async function listDocumentChunks(documentId: number, params: ListParams 
 
 export async function embedKnowledgeDocument(documentId: number): Promise<EmbedDocumentResult> {
   const response = await http.post<{ data: EmbedDocumentResult }>(`/knowledge-documents/${documentId}/embed`)
+  return response.data.data
+}
+
+export async function searchRag(query: string, knowledgeBaseId?: number | null, topK = 5): Promise<RagSearchResponse> {
+  const response = await http.post<{ data: RagSearchResponse }>('/rag/search', {
+    query,
+    knowledge_base_id: knowledgeBaseId,
+    top_k: topK
+  })
   return response.data.data
 }
