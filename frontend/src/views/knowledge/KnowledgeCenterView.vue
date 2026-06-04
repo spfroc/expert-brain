@@ -67,7 +67,7 @@
                 <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
                 <el-button link type="info" @click="openUploadDialog(scope.row)">上传文件</el-button>
                 <el-button link type="primary" @click="openChunksDialog(scope.row)">切片</el-button>
-                <el-button link type="primary" :loading="chunkingDocumentId === scope.row.id" @click="chunkDocument(scope.row.id)">生成切片</el-button>
+                <el-button link type="primary" :loading="chunkingDocumentId === scope.row.id" @click="generateChunks(scope.row.id)">生成切片</el-button>
                 <el-button link type="danger" :loading="embeddingDocumentId === scope.row.id" @click="embedDocument(scope.row.id)">向量化</el-button>
                 <el-button link type="danger" :loading="indexingDocumentId === scope.row.id" @click="indexDocument(scope.row.id)">一键入库</el-button>
                 <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
@@ -353,7 +353,7 @@ async function loadChunks(): Promise<void> {
 }
 function handleChunkPageChange(page: number): void { chunkPagination.current_page = page; void loadChunks() }
 
-async function chunkDocument(id: number): Promise<void> {
+async function generateChunks(id: number): Promise<void> {
   chunkingDocumentId.value = id
   try { const result = await chunkKnowledgeDocument(id); ElMessage.success(`生成切片完成：${result.chunk_count} 个`) } finally { chunkingDocumentId.value = null }
 }
