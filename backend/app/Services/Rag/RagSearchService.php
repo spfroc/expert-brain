@@ -23,7 +23,7 @@ class RagSearchService
         $embeddingElapsedMs = $this->elapsedMs($embeddingStartedAt);
 
         $vector = $this->toPgVector($embedding);
-        $candidateLimit = max($topK * 8, 30);
+        $candidateLimit = max($topK * 4, 20);
         $activeModel = $this->activeEmbeddingModel();
 
         if ($activeModel) {
@@ -35,8 +35,10 @@ class RagSearchService
         $terms = $this->extractTerms($expandedQuery);
 
         $dbStartedAt = microtime(true);
-        DB::statement('SET LOCAL statement_timeout = 15000');
-        $rows = DB::select($sql, $bindings);
+        $rows = DB::transaction(function () use ($sql, $bindings) {
+            DB::statement('SET LOCAL statement_timeout = 15000');
+            return DB::select($sql, $bindings);
+        });
         $dbElapsedMs = $this->elapsedMs($dbStartedAt);
 
         $rerankStartedAt = microtime(true);
@@ -120,7 +122,7 @@ SQL;
 
         $sql .= ' ORDER BY dce.embedding <=> ?::vector LIMIT ?';
         $bindings[] = $vector;
-        $bindings[] = max(1, min($candidateLimit, 100));
+        $bindings[] = max(1, min($candidateLimit, 80));
 
         return [$sql, $bindings];
     }
@@ -158,7 +160,7 @@ SQL;
 
         $sql .= ' ORDER BY dc.embedding <=> ?::vector LIMIT ?';
         $bindings[] = $vector;
-        $bindings[] = max(1, min($candidateLimit, 100));
+        $bindings[] = max(1, min($candidateLimit, 80));
 
         return [$sql, $bindings];
     }
@@ -259,7 +261,7 @@ SQL;
         ]);
 
         if ($response->failed()) {
-            throw new RuntimeException('AI service embedding failed: '.$response->body());
+            throw new RuntimeException('AI service embedding failed: HTTP '.$response->status().' '.mb_substr($response->body(), 0, 1000));
         }
 
         $embeddings = $response->json('embeddings');
