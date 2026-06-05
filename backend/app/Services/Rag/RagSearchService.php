@@ -5,6 +5,7 @@ namespace App\Services\Rag;
 use App\Models\AiModel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class RagSearchService
@@ -14,8 +15,13 @@ class RagSearchService
      */
     public function search(string $query, ?int $knowledgeBaseId = null, int $topK = 5): array
     {
+        $startedAt = microtime(true);
         $expandedQuery = $this->expandQuery($query);
+
+        $embeddingStartedAt = microtime(true);
         $embedding = $this->embedQuery($expandedQuery);
+        $embeddingElapsedMs = $this->elapsedMs($embeddingStartedAt);
+
         $vector = $this->toPgVector($embedding);
         $candidateLimit = max($topK * 8, 30);
         $activeModel = $this->activeEmbeddingModel();
@@ -27,8 +33,13 @@ class RagSearchService
         }
 
         $terms = $this->extractTerms($expandedQuery);
-        $rows = DB::select($sql, $bindings);
 
+        $dbStartedAt = microtime(true);
+        DB::statement('SET LOCAL statement_timeout = 15000');
+        $rows = DB::select($sql, $bindings);
+        $dbElapsedMs = $this->elapsedMs($dbStartedAt);
+
+        $rerankStartedAt = microtime(true);
         $results = array_map(function ($row) use ($terms, $query, $expandedQuery, $activeModel) {
             $distance = (float) $row->distance;
             $vectorScore = 1 - $distance;
@@ -57,8 +68,22 @@ class RagSearchService
         }, $rows);
 
         usort($results, fn ($a, $b) => $b['score'] <=> $a['score']);
+        $results = array_slice($results, 0, max(1, min($topK, 20)));
 
-        return array_slice($results, 0, max(1, min($topK, 20)));
+        Log::info('RAG search timing', [
+            'knowledge_base_id' => $knowledgeBaseId,
+            'top_k' => $topK,
+            'candidate_limit' => $candidateLimit,
+            'active_model_key' => $activeModel?->model_key ?? 'legacy',
+            'embedding_ms' => $embeddingElapsedMs,
+            'db_ms' => $dbElapsedMs,
+            'rerank_ms' => $this->elapsedMs($rerankStartedAt),
+            'total_ms' => $this->elapsedMs($startedAt),
+            'row_count' => count($rows),
+            'result_count' => count($results),
+        ]);
+
+        return $results;
     }
 
     /**
@@ -228,7 +253,7 @@ SQL;
      */
     private function embedQuery(string $query): array
     {
-        $response = Http::timeout(60)->post($this->aiServiceUrl('/embeddings/embed'), [
+        $response = Http::timeout(20)->post($this->aiServiceUrl('/embeddings/embed'), [
             'texts' => [$query],
             'normalize' => true,
         ]);
@@ -254,6 +279,11 @@ SQL;
             fn ($value) => is_numeric($value) ? (string) ((float) $value) : '0',
             $values
         )).']';
+    }
+
+    private function elapsedMs(float $startedAt): int
+    {
+        return (int) round((microtime(true) - $startedAt) * 1000);
     }
 
     private function aiServiceUrl(string $path): string
