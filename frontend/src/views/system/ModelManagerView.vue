@@ -12,7 +12,7 @@
     </div>
 
     <el-alert
-      title="当前版本的“激活模型”只更新系统注册表。embedding 实际运行模型仍由 ai-service 环境变量控制；切换 embedding 维度后需要重建向量。"
+      title="激活 embedding 模型前应先查看覆盖率。目标模型缺少部分切片向量时，检索结果会不完整；需要先补齐该模型的向量数据。"
       type="warning"
       show-icon
       :closable="false"
@@ -52,10 +52,11 @@
         <el-table-column prop="dimension" label="维度" width="90" />
         <el-table-column prop="model_id" label="模型 ID" min-width="220" show-overflow-tooltip />
         <el-table-column prop="local_path" label="本地路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="scope">
             <el-button link type="primary" :loading="checkingId === scope.row.id" @click="checkModel(scope.row)">检查</el-button>
             <el-button link type="success" :loading="activatingId === scope.row.id" @click="activateModel(scope.row)">激活</el-button>
+            <el-button v-if="scope.row.task_type === 'embedding'" link type="primary" :loading="coverageLoadingId === scope.row.id" @click="showCoverage(scope.row)">覆盖率</el-button>
             <el-button link type="info" @click="showDownloadCommand(scope.row)">下载命令</el-button>
             <el-button link type="warning" @click="showEvents(scope.row)">事件</el-button>
           </template>
@@ -69,6 +70,45 @@
       <template #footer>
         <el-button @click="commandDialogVisible = false">关闭</el-button>
         <el-button type="primary" @click="copyCommand">复制命令</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="coverageDialogVisible" :title="`向量覆盖率：${currentModel?.name ?? ''}`" width="960px">
+      <div v-if="coverage" class="space-y-4">
+        <el-alert
+          v-if="coverage.missing_chunks > 0"
+          type="warning"
+          show-icon
+          :closable="false"
+          title="该模型尚未覆盖全部切片。切换到该模型前，建议先补齐缺失向量。"
+        />
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="模型">{{ coverage.model_key }}</el-descriptions-item>
+          <el-descriptions-item label="总切片">{{ coverage.total_chunks }}</el-descriptions-item>
+          <el-descriptions-item label="已向量化">{{ coverage.embedded_chunks }}</el-descriptions-item>
+          <el-descriptions-item label="缺失切片">{{ coverage.missing_chunks }}</el-descriptions-item>
+          <el-descriptions-item label="覆盖率">{{ coverage.coverage_rate }}%</el-descriptions-item>
+          <el-descriptions-item label="知识库">{{ coverage.knowledge_base_id ?? '全部' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-progress :percentage="Number(coverage.coverage_rate)" :status="coverage.missing_chunks > 0 ? 'warning' : 'success'" />
+
+        <div class="flex items-center justify-between pt-2">
+          <div class="font-medium">缺失向量的文档</div>
+          <el-button size="small" :loading="loadingMissingDocuments" @click="loadMissingDocuments">刷新缺失列表</el-button>
+        </div>
+        <el-table :data="missingDocuments" v-loading="loadingMissingDocuments" height="360">
+          <el-table-column prop="knowledge_document_id" label="文档 ID" width="100" />
+          <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
+          <el-table-column prop="total_chunks" label="切片" width="90" />
+          <el-table-column prop="embedded_chunks" label="已完成" width="90" />
+          <el-table-column prop="missing_chunks" label="缺失" width="90" />
+          <el-table-column prop="coverage_rate" label="覆盖率" width="120">
+            <template #default="scope">{{ scope.row.coverage_rate }}%</template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="coverageDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -96,15 +136,21 @@ import { ElMessage } from 'element-plus'
 import {
   activateAiModel,
   checkAiModel,
+  getAiModelCoverage,
   installRecommendedAiModels,
   listAiModelEvents,
+  listAiModelMissingDocuments,
   listAiModels,
   type AiModel,
-  type AiModelEvent
+  type AiModelEvent,
+  type EmbeddingCoverage,
+  type EmbeddingDocumentCoverage
 } from '@/api/aiModels'
 
 const models = ref<AiModel[]>([])
 const events = ref<AiModelEvent[]>([])
+const coverage = ref<EmbeddingCoverage | null>(null)
+const missingDocuments = ref<EmbeddingDocumentCoverage[]>([])
 const currentModel = ref<AiModel | null>(null)
 const currentCommand = ref('')
 const checkResult = ref('')
@@ -113,8 +159,11 @@ const loading = ref(false)
 const installing = ref(false)
 const checkingId = ref<number | null>(null)
 const activatingId = ref<number | null>(null)
+const coverageLoadingId = ref<number | null>(null)
 const loadingEvents = ref(false)
+const loadingMissingDocuments = ref(false)
 const commandDialogVisible = ref(false)
+const coverageDialogVisible = ref(false)
 const eventsDialogVisible = ref(false)
 const checkDialogVisible = ref(false)
 
@@ -165,6 +214,28 @@ async function activateModel(model: AiModel): Promise<void> {
     await loadModels()
   } finally {
     activatingId.value = null
+  }
+}
+
+async function showCoverage(model: AiModel): Promise<void> {
+  currentModel.value = model
+  coverageLoadingId.value = model.id
+  try {
+    coverage.value = await getAiModelCoverage(model.id)
+    coverageDialogVisible.value = true
+    await loadMissingDocuments()
+  } finally {
+    coverageLoadingId.value = null
+  }
+}
+
+async function loadMissingDocuments(): Promise<void> {
+  if (!currentModel.value) return
+  loadingMissingDocuments.value = true
+  try {
+    missingDocuments.value = await listAiModelMissingDocuments(currentModel.value.id, null, 100)
+  } finally {
+    loadingMissingDocuments.value = false
   }
 }
 
