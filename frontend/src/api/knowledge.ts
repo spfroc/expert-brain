@@ -65,11 +65,13 @@ export interface RagSearchResult {
   knowledge_base_id: number
   distance: number
   score: number
+  model_key?: string | null
 }
 
 export interface RagSearchResponse {
   query: string
   results: RagSearchResult[]
+  elapsed_ms?: number
 }
 
 export async function listKnowledgeBases(params: ListParams = {}): Promise<PaginatedResponse<KnowledgeBase>> {
@@ -175,6 +177,8 @@ export async function searchRag(query: string, knowledgeBaseId?: number | null, 
     query,
     knowledge_base_id: knowledgeBaseId,
     top_k: topK
+  }, {
+    timeout: 180000
   })
   return response.data.data
 }
