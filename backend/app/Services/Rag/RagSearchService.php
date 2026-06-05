@@ -2,6 +2,7 @@
 
 namespace App\Services\Rag;
 
+use App\Models\AiModel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -17,40 +18,18 @@ class RagSearchService
         $embedding = $this->embedQuery($expandedQuery);
         $vector = $this->toPgVector($embedding);
         $candidateLimit = max($topK * 8, 30);
+        $activeModel = $this->activeEmbeddingModel();
 
-        $sql = <<<'SQL'
-SELECT
-    dc.id AS chunk_id,
-    dc.knowledge_document_id,
-    dc.chunk_index,
-    dc.content,
-    dc.token_count,
-    dc.metadata,
-    kd.title AS document_title,
-    kd.source_type,
-    kd.source_url,
-    kd.knowledge_base_id,
-    (dc.embedding <=> ?::vector) AS distance
-FROM document_chunks dc
-JOIN knowledge_documents kd ON kd.id = dc.knowledge_document_id
-WHERE dc.embedding IS NOT NULL
-SQL;
-
-        $bindings = [$vector];
-
-        if ($knowledgeBaseId !== null) {
-            $sql .= ' AND kd.knowledge_base_id = ?';
-            $bindings[] = $knowledgeBaseId;
+        if ($activeModel) {
+            [$sql, $bindings] = $this->buildMultiModelSearchSql($vector, $activeModel->model_key, $knowledgeBaseId, $candidateLimit);
+        } else {
+            [$sql, $bindings] = $this->buildLegacySearchSql($vector, $knowledgeBaseId, $candidateLimit);
         }
-
-        $sql .= ' ORDER BY dc.embedding <=> ?::vector LIMIT ?';
-        $bindings[] = $vector;
-        $bindings[] = max(1, min($candidateLimit, 100));
 
         $terms = $this->extractTerms($expandedQuery);
         $rows = DB::select($sql, $bindings);
 
-        $results = array_map(function ($row) use ($terms, $query, $expandedQuery) {
+        $results = array_map(function ($row) use ($terms, $query, $expandedQuery, $activeModel) {
             $distance = (float) $row->distance;
             $vectorScore = 1 - $distance;
             $keywordScore = $this->keywordScore($row->content, $row->document_title, $terms);
@@ -73,12 +52,98 @@ SQL;
                 'vector_score' => $vectorScore,
                 'keyword_score' => $keywordScore,
                 'section_score' => $sectionScore,
+                'model_key' => $row->model_key ?? $activeModel?->model_key ?? 'legacy',
             ];
         }, $rows);
 
         usort($results, fn ($a, $b) => $b['score'] <=> $a['score']);
 
         return array_slice($results, 0, max(1, min($topK, 20)));
+    }
+
+    /**
+     * @return array{0:string,1:array<int,mixed>}
+     */
+    private function buildMultiModelSearchSql(string $vector, string $modelKey, ?int $knowledgeBaseId, int $candidateLimit): array
+    {
+        $sql = <<<'SQL'
+SELECT
+    dc.id AS chunk_id,
+    dc.knowledge_document_id,
+    dc.chunk_index,
+    dc.content,
+    dc.token_count,
+    dc.metadata,
+    kd.title AS document_title,
+    kd.source_type,
+    kd.source_url,
+    kd.knowledge_base_id,
+    dce.model_key,
+    (dce.embedding <=> ?::vector) AS distance
+FROM document_chunk_embeddings dce
+JOIN document_chunks dc ON dc.id = dce.document_chunk_id
+JOIN knowledge_documents kd ON kd.id = dc.knowledge_document_id
+WHERE dce.embedding IS NOT NULL AND dce.model_key = ?
+SQL;
+
+        $bindings = [$vector, $modelKey];
+
+        if ($knowledgeBaseId !== null) {
+            $sql .= ' AND kd.knowledge_base_id = ?';
+            $bindings[] = $knowledgeBaseId;
+        }
+
+        $sql .= ' ORDER BY dce.embedding <=> ?::vector LIMIT ?';
+        $bindings[] = $vector;
+        $bindings[] = max(1, min($candidateLimit, 100));
+
+        return [$sql, $bindings];
+    }
+
+    /**
+     * @return array{0:string,1:array<int,mixed>}
+     */
+    private function buildLegacySearchSql(string $vector, ?int $knowledgeBaseId, int $candidateLimit): array
+    {
+        $sql = <<<'SQL'
+SELECT
+    dc.id AS chunk_id,
+    dc.knowledge_document_id,
+    dc.chunk_index,
+    dc.content,
+    dc.token_count,
+    dc.metadata,
+    kd.title AS document_title,
+    kd.source_type,
+    kd.source_url,
+    kd.knowledge_base_id,
+    'legacy' AS model_key,
+    (dc.embedding <=> ?::vector) AS distance
+FROM document_chunks dc
+JOIN knowledge_documents kd ON kd.id = dc.knowledge_document_id
+WHERE dc.embedding IS NOT NULL
+SQL;
+
+        $bindings = [$vector];
+
+        if ($knowledgeBaseId !== null) {
+            $sql .= ' AND kd.knowledge_base_id = ?';
+            $bindings[] = $knowledgeBaseId;
+        }
+
+        $sql .= ' ORDER BY dc.embedding <=> ?::vector LIMIT ?';
+        $bindings[] = $vector;
+        $bindings[] = max(1, min($candidateLimit, 100));
+
+        return [$sql, $bindings];
+    }
+
+    private function activeEmbeddingModel(): ?AiModel
+    {
+        return AiModel::query()
+            ->where('task_type', 'embedding')
+            ->where('is_active', true)
+            ->first();
     }
 
     private function expandQuery(string $query): string
