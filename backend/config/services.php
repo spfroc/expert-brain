@@ -37,6 +37,8 @@ return [
 
     'ai_service' => [
         'url' => env('AI_SERVICE_URL', 'http://ai-service:8000'),
+        'embedding_timeout' => (int) env('AI_SERVICE_EMBEDDING_TIMEOUT', 120),
+        'parse_timeout' => (int) env('AI_SERVICE_PARSE_TIMEOUT', 180),
     ],
 
 ];
