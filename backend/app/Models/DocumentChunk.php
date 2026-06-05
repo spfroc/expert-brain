@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class DocumentChunk extends Model
 {
@@ -36,5 +37,10 @@ class DocumentChunk extends Model
     public function file(): BelongsTo
     {
         return $this->belongsTo(DocumentFile::class, 'document_file_id');
+    }
+
+    public function embeddings(): HasMany
+    {
+        return $this->hasMany(DocumentChunkEmbedding::class, 'document_chunk_id');
     }
 }
