@@ -7,7 +7,7 @@
       "version": "22"
     },
     "ghcr.io/devcontainers/features/php:1": {
-      "version": "8.4",
+      "version": "8.3",
       "installComposer": true
     },
     "ghcr.io/devcontainers/features/python:1": {
@@ -22,9 +22,7 @@
         "Vue.volar",
         "bradlc.vscode-tailwindcss",
         "ms-python.python",
-        "ms-azuretools.vscode-docker",
-        "GitHub.copilot",
-        "GitHub.copilot-chat"
+        "ms-azuretools.vscode-docker"
       ]
     }
   },
@@ -32,7 +30,7 @@
   "portsAttributes": {
     "15173": {
       "label": "ExpertBrain Frontend",
-      "onAutoForward": "openBrowser"
+      "onAutoForward": "openPreview"
     },
     "18080": {
       "label": "ExpertBrain Laravel API"
@@ -47,6 +45,5 @@
       "label": "Redis"
     }
   },
-  "postCreateCommand": "bash scripts/codespaces-post-create.sh",
   "remoteUser": "vscode"
 }
