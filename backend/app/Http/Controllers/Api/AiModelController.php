@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AiModel;
 use App\Services\AiModel\AiModelRegistryService;
+use App\Services\AiModel\EmbeddingCoverageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -102,6 +103,31 @@ class AiModelController extends Controller
         return response()->json([
             'success' => true,
             'data' => $service->check($aiModel, $request->user()?->id),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
+    }
+
+    public function coverage(Request $request, AiModel $aiModel, EmbeddingCoverageService $coverageService): JsonResponse
+    {
+        $knowledgeBaseId = $request->integer('knowledge_base_id') ?: null;
+
+        return response()->json([
+            'success' => true,
+            'data' => $coverageService->knowledgeBaseCoverage($aiModel, $knowledgeBaseId),
+            'message' => 'ok',
+            'errors' => null,
+        ]);
+    }
+
+    public function missingDocuments(Request $request, AiModel $aiModel, EmbeddingCoverageService $coverageService): JsonResponse
+    {
+        $knowledgeBaseId = $request->integer('knowledge_base_id') ?: null;
+        $limit = max(1, min(200, $request->integer('limit', 50)));
+
+        return response()->json([
+            'success' => true,
+            'data' => $coverageService->documentCoverage($aiModel, $knowledgeBaseId, $limit, true),
             'message' => 'ok',
             'errors' => null,
         ]);
