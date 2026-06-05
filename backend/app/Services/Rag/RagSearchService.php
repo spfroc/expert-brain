@@ -255,7 +255,9 @@ SQL;
      */
     private function embedQuery(string $query): array
     {
-        $response = Http::timeout(20)->post($this->aiServiceUrl('/embeddings/embed'), [
+        $timeout = max(5, (int) config('services.ai_service.embedding_timeout', 120));
+
+        $response = Http::timeout($timeout)->post($this->aiServiceUrl('/embeddings/embed'), [
             'texts' => [$query],
             'normalize' => true,
         ]);
