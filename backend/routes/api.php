@@ -27,6 +27,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('ai-models/install-recommended', [AiModelController::class, 'installRecommended']);
         Route::post('ai-models/{aiModel}/activate', [AiModelController::class, 'activate']);
         Route::post('ai-models/{aiModel}/check', [AiModelController::class, 'check']);
+        Route::get('ai-models/{aiModel}/coverage', [AiModelController::class, 'coverage']);
+        Route::get('ai-models/{aiModel}/missing-documents', [AiModelController::class, 'missingDocuments']);
         Route::get('ai-models/{aiModel}/events', [AiModelController::class, 'events']);
 
         Route::apiResource('knowledge-bases', KnowledgeBaseController::class);
