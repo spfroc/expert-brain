@@ -30,6 +30,25 @@ export interface AiModelEvent {
   created_at?: string | null
 }
 
+export interface EmbeddingCoverage {
+  model_key: string
+  knowledge_base_id?: number | null
+  total_chunks: number
+  embedded_chunks: number
+  missing_chunks: number
+  coverage_rate: number
+}
+
+export interface EmbeddingDocumentCoverage {
+  knowledge_document_id: number
+  knowledge_base_id: number
+  title: string
+  total_chunks: number
+  embedded_chunks: number
+  missing_chunks: number
+  coverage_rate: number
+}
+
 export interface LaravelPaginator<T> {
   data: T[]
   current_page: number
@@ -76,6 +95,27 @@ export async function checkAiModel(id: number): Promise<Record<string, unknown>>
 
 export async function activateAiModel(id: number): Promise<AiModel> {
   const response = await http.post<ApiEnvelope<AiModel>>(`/ai-models/${id}/activate`)
+  return response.data.data
+}
+
+export async function getAiModelCoverage(id: number, knowledgeBaseId?: number | null): Promise<EmbeddingCoverage> {
+  const response = await http.get<ApiEnvelope<EmbeddingCoverage>>(`/ai-models/${id}/coverage`, {
+    params: knowledgeBaseId ? { knowledge_base_id: knowledgeBaseId } : {}
+  })
+  return response.data.data
+}
+
+export async function listAiModelMissingDocuments(
+  id: number,
+  knowledgeBaseId?: number | null,
+  limit = 50
+): Promise<EmbeddingDocumentCoverage[]> {
+  const response = await http.get<ApiEnvelope<EmbeddingDocumentCoverage[]>>(`/ai-models/${id}/missing-documents`, {
+    params: {
+      ...(knowledgeBaseId ? { knowledge_base_id: knowledgeBaseId } : {}),
+      limit
+    }
+  })
   return response.data.data
 }
 
