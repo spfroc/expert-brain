@@ -12,6 +12,15 @@
       :closable="false"
     />
 
+    <el-alert
+      v-if="errorMessage"
+      :title="errorMessage"
+      type="error"
+      show-icon
+      class="mb-4"
+      @close="errorMessage = ''"
+    />
+
     <el-card>
       <el-form label-position="top">
         <el-form-item label="知识库">
@@ -24,14 +33,15 @@
             v-model="query"
             type="textarea"
             :rows="4"
-            placeholder="例如：京东慧采适合什么类型的供应商？"
+            placeholder="例如：供应商参加政府采购活动应当具备哪些条件？"
             @keyup.ctrl.enter="runSearch"
           />
         </el-form-item>
         <div class="flex items-center gap-3">
-          <el-input-number v-model="topK" :min="1" :max="20" />
+          <el-input-number v-model="topK" :min="1" :max="10" />
           <span class="text-sm text-slate-500">召回数量</span>
           <el-button type="primary" :loading="loading" @click="runSearch">检索</el-button>
+          <span v-if="elapsedMs" class="text-sm text-slate-400">耗时 {{ elapsedMs }} ms</span>
         </div>
       </el-form>
     </el-card>
@@ -45,7 +55,7 @@
         <p class="text-slate-700">根据当前知识库召回结果，可以先这样回答：</p>
         <div class="whitespace-pre-wrap leading-7 bg-slate-50 border rounded p-4">{{ answerDraft }}</div>
       </div>
-      <el-empty v-else description="没有检索到结果，请确认文档已生成切片并完成向量化。" />
+      <el-empty v-else description="没有检索到结果，请确认文档已生成切片并完成当前模型的向量化。" />
     </el-card>
 
     <el-card v-if="results.length > 0">
@@ -58,7 +68,7 @@
           <div class="flex items-center justify-between mb-2 gap-4">
             <div class="font-semibold">{{ item.document_title }}</div>
             <div class="text-sm text-slate-500 shrink-0">
-              chunk #{{ item.chunk_index }} / score {{ item.score.toFixed(4) }} / distance {{ item.distance.toFixed(4) }}
+              chunk #{{ item.chunk_index }} / score {{ item.score.toFixed(4) }} / distance {{ item.distance.toFixed(4) }} / {{ item.model_key ?? 'legacy' }}
             </div>
           </div>
           <div class="whitespace-pre-wrap text-sm leading-6 text-slate-700">{{ item.content }}</div>
@@ -70,6 +80,7 @@
 </template>
 
 <script setup lang="ts">
+import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listKnowledgeBases, searchRag, type RagSearchResult } from '@/api/knowledge'
@@ -82,6 +93,8 @@ const topK = ref(5)
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<RagSearchResult[]>([])
+const elapsedMs = ref<number | null>(null)
+const errorMessage = ref('')
 
 const answerDraft = computed(() => {
   if (results.value.length === 0) return ''
@@ -112,10 +125,29 @@ async function runSearch(): Promise<void> {
   }
 
   loading.value = true
+  errorMessage.value = ''
+  elapsedMs.value = null
   try {
     const response = await searchRag(query.value, selectedBaseId.value, topK.value)
     results.value = response.results
+    elapsedMs.value = response.elapsed_ms ?? null
     searched.value = true
+  } catch (error) {
+    searched.value = true
+    results.value = []
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNABORTED') {
+        errorMessage.value = 'RAG 检索请求超时。可能是 embedding 服务加载模型较慢、向量检索过慢，或目标模型向量覆盖不足。'
+      } else if (error.response?.data?.errors?.rag?.[0]) {
+        errorMessage.value = error.response.data.errors.rag[0]
+      } else if (error.response?.data?.message) {
+        errorMessage.value = error.response.data.message
+      } else {
+        errorMessage.value = error.message
+      }
+    } else {
+      errorMessage.value = 'RAG 检索失败'
+    }
   } finally {
     loading.value = false
   }
