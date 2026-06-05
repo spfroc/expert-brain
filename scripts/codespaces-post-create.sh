@@ -14,16 +14,24 @@ if [ -f ai-service/.env.example ] && [ ! -f ai-service/.env ]; then
   cp ai-service/.env.example ai-service/.env
 fi
 
-mkdir -p "$HOME/models"
+mkdir -p "$HOME/models" models
+chmod +x scripts/codespaces-up.sh scripts/codespaces-smoke-test.sh || true
 
 cat <<'EOF'
 
 [ExpertBrain] Codespaces setup complete.
 
-Next commands:
+Start the full stack with:
 
-  docker compose up -d --build
-  docker compose exec backend php artisan migrate --seed
+  bash scripts/codespaces-up.sh
+
+This will:
+
+  1. Prepare backend/.env and ai-service/.env
+  2. Start Docker Compose services
+  3. Run migrations and seeders
+  4. Install recommended model registry records
+  5. Run smoke tests
 
 Open ports:
 
