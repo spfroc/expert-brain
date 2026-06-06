@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class KnowledgeDocument extends Model
 {
@@ -63,6 +64,16 @@ class KnowledgeDocument extends Model
     public function tags(): BelongsToMany
     {
         return $this->belongsToMany(KnowledgeTag::class, 'knowledge_document_tags', 'document_id', 'tag_id');
+    }
+
+    public function files(): HasMany
+    {
+        return $this->hasMany(DocumentFile::class, 'knowledge_document_id');
+    }
+
+    public function chunks(): HasMany
+    {
+        return $this->hasMany(DocumentChunk::class, 'knowledge_document_id');
     }
 
     protected function contentPreview(): Attribute
