@@ -101,6 +101,7 @@ class RagSearchService
         }
 
         $bullets = [];
+        $seenPoints = [];
         $citations = [];
 
         foreach ($results as $result) {
@@ -109,10 +110,11 @@ class RagSearchService
             $content = $this->normalizeWhitespace((string) ($result['content'] ?? ''));
             $point = $this->summarizePolicyPoint($content, $query);
 
-            if ($point === null) {
+            if ($point === null || isset($seenPoints[$point])) {
                 continue;
             }
 
+            $seenPoints[$point] = true;
             $citation = $article ? "{$documentTitle}{$article}" : $documentTitle;
             $bullets[] = $point.'（依据：'.$citation.'）';
             $citations[] = [
@@ -130,9 +132,14 @@ class RagSearchService
             return null;
         }
 
+        $numbered = [];
+        foreach (array_values($bullets) as $index => $line) {
+            $numbered[] = ($index + 1).'. '.$line;
+        }
+
         return [
             'style' => 'extractive_policy_summary',
-            'answer' => "建议重点注意：\n".implode("\n", array_map(fn ($line) => '1. '.$line, array_values($bullets))),
+            'answer' => "建议重点注意：\n".implode("\n", $numbered),
             'bullets' => $bullets,
             'citations' => $citations,
             'disclaimer' => '以上为基于已入库法规条文的检索式整理，不等同于正式法律意见。',
