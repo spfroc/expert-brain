@@ -110,6 +110,7 @@
           <el-tag v-if="results.length > 0" :type="isLowConfidence ? 'warning' : 'success'" effect="plain">
             {{ isLowConfidence ? '低可信召回' : '可用召回' }}
           </el-tag>
+          <el-tag v-else-if="diagnostics" :type="diagnosticTagType" effect="plain">{{ diagnostics.status }}</el-tag>
         </div>
       </template>
 
@@ -125,6 +126,37 @@
       <div v-if="results.length > 0" class="space-y-3">
         <p class="text-sm text-slate-600">根据当前知识库召回结果，可以先这样回答：</p>
         <div class="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">{{ answerDraft }}</div>
+      </div>
+      <div v-else-if="diagnostics" class="space-y-4">
+        <el-alert
+          :title="diagnostics.reason"
+          :description="diagnostics.next_action"
+          :type="diagnosticTagType"
+          show-icon
+          :closable="false"
+        />
+        <div class="grid gap-3 md:grid-cols-5">
+          <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.documents_count }}</div>
+            <div class="text-xs text-slate-500">文档</div>
+          </div>
+          <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.chunks_count }}</div>
+            <div class="text-xs text-slate-500">切片</div>
+          </div>
+          <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.effective_embeddings_count }}</div>
+            <div class="text-xs text-slate-500">有效向量</div>
+          </div>
+          <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+            <div class="truncate text-sm font-semibold text-slate-900">{{ diagnostics.knowledge_base_name || '全部' }}</div>
+            <div class="text-xs text-slate-500">知识库</div>
+          </div>
+          <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+            <div class="truncate text-sm font-semibold text-slate-900">{{ diagnostics.active_embedding_model_key || 'legacy' }}</div>
+            <div class="text-xs text-slate-500">模型</div>
+          </div>
+        </div>
       </div>
       <el-empty v-else description="没有检索到结果">
         <div class="max-w-xl text-left text-sm leading-7 text-slate-500">
@@ -170,7 +202,7 @@
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listKnowledgeBases, searchRag, type RagSearchResult } from '@/api/knowledge'
+import { listKnowledgeBases, searchRag, type RagSearchDiagnostics, type RagSearchResult } from '@/api/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 const bases = ref<KnowledgeBase[]>([])
@@ -180,6 +212,7 @@ const topK = ref(5)
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<RagSearchResult[]>([])
+const diagnostics = ref<RagSearchDiagnostics | null>(null)
 const elapsedMs = ref<number | null>(null)
 const errorMessage = ref('')
 
@@ -199,6 +232,12 @@ const isLowConfidence = computed(() => results.value.length > 0 && (bestScore.va
 const bestScoreClass = computed(() => {
   if (bestScore.value === null) return 'text-slate-900'
   return bestScore.value >= 0.35 ? 'text-emerald-600' : 'text-amber-600'
+})
+const diagnosticTagType = computed((): 'success' | 'warning' | 'danger' | 'info' => {
+  if (!diagnostics.value) return 'info'
+  if (diagnostics.value.status === 'low_similarity') return 'warning'
+  if (diagnostics.value.status === 'no_documents' || diagnostics.value.status === 'no_chunks' || diagnostics.value.status === 'no_embeddings') return 'warning'
+  return 'info'
 })
 
 const answerDraft = computed(() => {
@@ -230,6 +269,7 @@ function fillExample(): void {
 function clearSearch(): void {
   query.value = ''
   results.value = []
+  diagnostics.value = null
   elapsedMs.value = null
   searched.value = false
   errorMessage.value = ''
@@ -244,15 +284,18 @@ async function runSearch(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   elapsedMs.value = null
+  diagnostics.value = null
   try {
     const response = await searchRag(query.value, selectedBaseId.value, topK.value)
     results.value = response.results
+    diagnostics.value = response.diagnostics ?? null
     elapsedMs.value = response.elapsed_ms ?? null
     searched.value = true
   } catch (error) {
     searched.value = true
     results.value = []
     if (axios.isAxiosError(error)) {
+      diagnostics.value = error.response?.data?.data?.diagnostics ?? null
       if (error.code === 'ECONNABORTED') {
         errorMessage.value = 'RAG 检索请求超时。可能是 embedding 服务加载模型较慢、向量检索过慢，或目标模型向量覆盖不足。'
       } else if (error.response?.data?.errors?.rag?.[0]) {
