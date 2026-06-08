@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Knowledge\KnowledgeDocumentRequest;
 use App\Http\Resources\KnowledgeDocumentResource;
+use App\Models\AiModel;
 use App\Models\KnowledgeDocument;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,9 +15,29 @@ class KnowledgeDocumentController extends Controller
 {
     public function index(Request $request): AnonymousResourceCollection
     {
+        $activeEmbeddingModel = AiModel::query()
+            ->where('task_type', 'embedding')
+            ->where('is_active', true)
+            ->first();
+        $activeModelKey = $activeEmbeddingModel?->model_key;
+
         $query = KnowledgeDocument::query()
-            ->with('tags')
+            ->with(['tags', 'latestIngestionJob'])
+            ->withCount([
+                'files',
+                'chunks',
+                'chunks as legacy_embeddings_count' => fn ($query) => $query->whereNotNull('embedding'),
+            ])
             ->latest('id');
+
+        if ($activeModelKey) {
+            $query->withCount([
+                'chunks as active_model_embeddings_count' => fn ($query) => $query->whereHas(
+                    'embeddings',
+                    fn ($embeddingQuery) => $embeddingQuery->where('model_key', $activeModelKey)
+                ),
+            ]);
+        }
 
         if ($baseId = $request->integer('knowledge_base_id')) {
             $query->where('knowledge_base_id', $baseId);
@@ -38,7 +59,15 @@ class KnowledgeDocumentController extends Controller
             });
         }
 
-        return KnowledgeDocumentResource::collection($query->paginate($request->integer('per_page', 15)));
+        $documents = $query->paginate($request->integer('per_page', 15));
+        $documents->getCollection()->each(function (KnowledgeDocument $document) use ($activeModelKey): void {
+            $document->setAttribute('active_embedding_model_key', $activeModelKey);
+            if (! $activeModelKey) {
+                $document->setAttribute('active_model_embeddings_count', 0);
+            }
+        });
+
+        return KnowledgeDocumentResource::collection($documents);
     }
 
     public function store(KnowledgeDocumentRequest $request): KnowledgeDocumentResource
@@ -60,7 +89,7 @@ class KnowledgeDocumentController extends Controller
 
     public function show(KnowledgeDocument $knowledgeDocument): KnowledgeDocumentResource
     {
-        return new KnowledgeDocumentResource($knowledgeDocument->load('tags'));
+        return new KnowledgeDocumentResource($knowledgeDocument->load(['tags', 'latestIngestionJob'])->loadCount(['files', 'chunks']));
     }
 
     public function update(KnowledgeDocumentRequest $request, KnowledgeDocument $knowledgeDocument): KnowledgeDocumentResource
