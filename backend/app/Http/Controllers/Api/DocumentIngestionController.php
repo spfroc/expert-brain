@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\DocumentFileResource;
 use App\Http\Resources\DocumentIngestionJobResource;
+use App\Jobs\RunDocumentIngestionJob;
 use App\Models\DocumentFile;
 use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
@@ -40,14 +41,12 @@ class DocumentIngestionController extends Controller
         return DocumentIngestionJobResource::collection($query->paginate($request->integer('per_page', 20)));
     }
 
-    public function uploadFile(
-        Request $request,
-        KnowledgeDocument $knowledgeDocument,
-        DocumentIngestionProcessor $processor,
-        DocumentEmbeddingService $embeddingService
-    ): JsonResponse {
+    public function uploadFile(Request $request, KnowledgeDocument $knowledgeDocument): JsonResponse
+    {
         $validated = $request->validate([
             'file' => ['required', 'file', 'max:51200'],
+            'auto_process' => ['nullable', 'boolean'],
+            'auto_embed' => ['nullable', 'boolean'],
         ]);
 
         $uploadedFile = $validated['file'];
@@ -76,29 +75,26 @@ class DocumentIngestionController extends Controller
             'metadata' => [
                 'original_name' => $file->original_name,
                 'mime_type' => $file->mime_type,
-                'auto_process' => true,
+                'auto_process' => $request->boolean('auto_process', true),
+                'auto_embed' => $request->boolean('auto_embed', true),
             ],
         ]);
 
-        $processedJob = $processor->process($job);
-        $embeddingResult = null;
-
-        if ($processedJob->status === 'completed') {
-            $embeddingResult = $embeddingService->embedDocumentChunks($knowledgeDocument->id);
+        if ($request->boolean('auto_process', true)) {
+            RunDocumentIngestionJob::dispatch($job->id, $request->boolean('auto_embed', true));
         }
 
         return response()->json([
-            'success' => $processedJob->status === 'completed',
+            'success' => true,
             'data' => [
                 'file' => new DocumentFileResource($file),
-                'job' => new DocumentIngestionJobResource($processedJob),
-                'embedding' => $embeddingResult,
+                'job' => new DocumentIngestionJobResource($job->refresh()),
             ],
-            'message' => $processedJob->status === 'completed' ? 'uploaded, parsed, chunked and embedded' : 'upload succeeded but ingestion failed',
-            'errors' => $processedJob->status === 'completed' ? null : [
-                'ingestion' => [$processedJob->error_message],
-            ],
-        ], $processedJob->status === 'completed' ? 201 : 422);
+            'message' => $request->boolean('auto_process', true)
+                ? 'uploaded and queued for ingestion'
+                : 'uploaded and ingestion job created',
+            'errors' => null,
+        ], 202);
     }
 
     public function importUrl(Request $request): JsonResponse
@@ -108,6 +104,8 @@ class DocumentIngestionController extends Controller
             'title' => ['nullable', 'string', 'max:255'],
             'url' => ['required', 'url', 'max:2000'],
             'source_type' => ['nullable', Rule::in(['url', 'policy', 'platform_doc', 'notice'])],
+            'auto_process' => ['nullable', 'boolean'],
+            'auto_embed' => ['nullable', 'boolean'],
         ]);
 
         $document = KnowledgeDocument::query()->create([
@@ -130,7 +128,15 @@ class DocumentIngestionController extends Controller
             'progress' => 0,
             'source_url' => $validated['url'],
             'created_by' => $request->user()?->id,
+            'metadata' => [
+                'auto_process' => $request->boolean('auto_process', true),
+                'auto_embed' => $request->boolean('auto_embed', true),
+            ],
         ]);
+
+        if ($request->boolean('auto_process', true)) {
+            RunDocumentIngestionJob::dispatch($job->id, $request->boolean('auto_embed', true));
+        }
 
         return response()->json([
             'success' => true,
@@ -138,14 +144,30 @@ class DocumentIngestionController extends Controller
                 'document' => $document,
                 'job' => new DocumentIngestionJobResource($job),
             ],
-            'message' => 'ok',
+            'message' => $request->boolean('auto_process', true)
+                ? 'document created and queued for ingestion'
+                : 'document created and ingestion job created',
             'errors' => null,
-        ], 201);
+        ], 202);
     }
 
-    public function process(DocumentIngestionJob $documentIngestionJob, DocumentIngestionProcessor $processor): DocumentIngestionJobResource
+    public function process(DocumentIngestionJob $documentIngestionJob): DocumentIngestionJobResource
     {
-        return new DocumentIngestionJobResource($processor->process($documentIngestionJob));
+        if (in_array($documentIngestionJob->status, ['processing', 'completed'], true)) {
+            return new DocumentIngestionJobResource($documentIngestionJob);
+        }
+
+        $documentIngestionJob->forceFill([
+            'status' => 'pending',
+            'progress' => 0,
+            'error_message' => null,
+            'started_at' => null,
+            'finished_at' => null,
+        ])->save();
+
+        RunDocumentIngestionJob::dispatch($documentIngestionJob->id, true);
+
+        return new DocumentIngestionJobResource($documentIngestionJob->refresh());
     }
 
     public function chunk(KnowledgeDocument $knowledgeDocument, ManualDocumentChunkService $chunkService): JsonResponse
