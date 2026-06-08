@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AiModel;
+use App\Models\DocumentChunk;
+use App\Models\KnowledgeBase;
+use App\Models\KnowledgeDocument;
 use App\Services\Rag\RagSearchService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,9 +25,10 @@ class RagController extends Controller
 
         try {
             $startedAt = microtime(true);
+            $knowledgeBaseId = $validated['knowledge_base_id'] ?? null;
             $results = $searchService->search(
                 $validated['query'],
-                $validated['knowledge_base_id'] ?? null,
+                $knowledgeBaseId,
                 $validated['top_k'] ?? 5,
             );
 
@@ -33,6 +38,7 @@ class RagController extends Controller
                     'query' => $validated['query'],
                     'results' => $results,
                     'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'diagnostics' => count($results) === 0 ? $this->buildNoResultDiagnostics($knowledgeBaseId) : null,
                 ],
                 'message' => 'ok',
                 'errors' => null,
@@ -50,6 +56,7 @@ class RagController extends Controller
                 'data' => [
                     'query' => $validated['query'],
                     'results' => [],
+                    'diagnostics' => $this->buildNoResultDiagnostics($validated['knowledge_base_id'] ?? null),
                 ],
                 'message' => 'rag search failed',
                 'errors' => [
@@ -57,5 +64,72 @@ class RagController extends Controller
                 ],
             ], 500);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildNoResultDiagnostics(?int $knowledgeBaseId): array
+    {
+        $activeModel = AiModel::query()
+            ->where('task_type', 'embedding')
+            ->where('is_active', true)
+            ->first();
+
+        $documentQuery = KnowledgeDocument::query();
+        $chunkQuery = DocumentChunk::query();
+
+        if ($knowledgeBaseId) {
+            $documentQuery->where('knowledge_base_id', $knowledgeBaseId);
+            $chunkQuery->whereHas('document', function ($query) use ($knowledgeBaseId): void {
+                $query->where('knowledge_base_id', $knowledgeBaseId);
+            });
+        }
+
+        $documents = (clone $documentQuery)->count();
+        $chunks = (clone $chunkQuery)->count();
+        $legacyEmbeddings = (clone $chunkQuery)->whereNotNull('embedding')->count();
+        $activeModelEmbeddings = $activeModel
+            ? (clone $chunkQuery)->whereHas('embeddings', function ($query) use ($activeModel): void {
+                $query->where('model_key', $activeModel->model_key);
+            })->count()
+            : 0;
+
+        $knowledgeBase = $knowledgeBaseId ? KnowledgeBase::query()->find($knowledgeBaseId) : null;
+        $embeddingCount = $activeModel ? $activeModelEmbeddings : $legacyEmbeddings;
+
+        if ($documents === 0) {
+            $reason = $knowledgeBaseId ? '当前选择的知识库没有文档。' : '系统中还没有知识文档。';
+            $nextAction = '先在知识中心创建文档、上传文件或导入链接。';
+            $status = 'no_documents';
+        } elseif ($chunks === 0) {
+            $reason = '当前检索范围内有文档，但没有切片，因此无法召回内容。';
+            $nextAction = '到知识中心对文档执行“生成切片”或“一键入库”。';
+            $status = 'no_chunks';
+        } elseif ($embeddingCount === 0) {
+            $reason = $activeModel
+                ? "当前检索范围内有 {$chunks} 个切片，但 active 模型 {$activeModel->model_key} 没有对应向量。"
+                : "当前检索范围内有 {$chunks} 个切片，但没有可用向量。";
+            $nextAction = '到知识中心执行“向量化”，或在模型管理中补齐当前模型向量。';
+            $status = 'no_embeddings';
+        } else {
+            $reason = '当前检索范围内有切片和向量，但没有达到召回条件，可能是问题与知识库内容不匹配或相似度过低。';
+            $nextAction = '换一种问法、扩大知识库范围，或检查召回分数阈值和切片质量。';
+            $status = 'low_similarity';
+        }
+
+        return [
+            'status' => $status,
+            'reason' => $reason,
+            'next_action' => $nextAction,
+            'knowledge_base_id' => $knowledgeBaseId,
+            'knowledge_base_name' => $knowledgeBase?->name,
+            'active_embedding_model_key' => $activeModel?->model_key,
+            'documents_count' => $documents,
+            'chunks_count' => $chunks,
+            'legacy_embeddings_count' => $legacyEmbeddings,
+            'active_model_embeddings_count' => $activeModelEmbeddings,
+            'effective_embeddings_count' => $embeddingCount,
+        ];
     }
 }
