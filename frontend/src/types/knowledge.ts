@@ -40,6 +40,17 @@ export interface KnowledgeTag {
   updated_at?: string | null
 }
 
+export interface KnowledgeDocumentLatestJob {
+  id: number
+  job_type: string
+  status: string
+  progress: number
+  error_message?: string | null
+  created_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
 export interface KnowledgeDocument {
   id: number
   knowledge_base_id: number
@@ -55,6 +66,17 @@ export interface KnowledgeDocument {
   created_by?: number | null
   published_at?: string | null
   tags?: KnowledgeTag[]
+  files_count?: number
+  chunks_count?: number
+  legacy_embeddings_count?: number
+  active_model_embeddings_count?: number
+  active_embedding_model_key?: string | null
+  latest_job?: KnowledgeDocumentLatestJob | null
+  search_status?: string
+  search_status_label?: string
+  search_status_type?: 'success' | 'warning' | 'danger' | 'info' | string
+  next_action?: string
+  diagnostic_message?: string
   created_at?: string | null
   updated_at?: string | null
 }
