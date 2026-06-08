@@ -7,8 +7,8 @@ services:
       POSTGRES_DB: expert_brain
       POSTGRES_USER: expert_brain
       POSTGRES_PASSWORD: expert_brain
-      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
-      no_proxy: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     ports:
       - "15432:5432"
     volumes:
@@ -25,8 +25,8 @@ services:
     container_name: expert-brain-redis
     restart: unless-stopped
     environment:
-      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
-      no_proxy: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     ports:
       - "16379:6379"
     healthcheck:
@@ -44,8 +44,8 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
-      no_proxy: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     ports:
       - "18080:8080"
     volumes:
@@ -57,6 +57,29 @@ services:
         condition: service_healthy
     command: php artisan serve --host=0.0.0.0 --port=8080
 
+  backend-queue:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: expert-brain-backend-queue
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      QUEUE_CONNECTION: database
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+    volumes:
+      - ./backend:/var/www/html
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    command: sh -lc "nice -n 10 php artisan queue:work database --queue=default --sleep=2 --tries=1 --timeout=900 --memory=384 --max-jobs=100 --max-time=3600"
+
   ai-service:
     build:
       context: ./ai-service
@@ -66,8 +89,8 @@ services:
     env_file:
       - ./ai-service/.env
     environment:
-      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
-      no_proxy: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     ports:
       - "18000:8000"
     volumes:
@@ -88,8 +111,8 @@ services:
     environment:
       VITE_API_BASE_URL: /api/v1
       VITE_API_PROXY_TARGET: http://backend:8080
-      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
-      no_proxy: localhost,127.0.0.1,postgres,redis,backend,ai-service,frontend
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
+      no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     ports:
       - "15173:5173"
     volumes:
