@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class KnowledgeDocument extends Model
 {
@@ -74,6 +75,16 @@ class KnowledgeDocument extends Model
     public function chunks(): HasMany
     {
         return $this->hasMany(DocumentChunk::class, 'knowledge_document_id');
+    }
+
+    public function ingestionJobs(): HasMany
+    {
+        return $this->hasMany(DocumentIngestionJob::class, 'knowledge_document_id');
+    }
+
+    public function latestIngestionJob(): HasOne
+    {
+        return $this->hasOne(DocumentIngestionJob::class, 'knowledge_document_id')->latestOfMany();
     }
 
     protected function contentPreview(): Attribute
