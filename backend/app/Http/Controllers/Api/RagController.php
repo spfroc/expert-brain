@@ -36,6 +36,7 @@ class RagController extends Controller
                 'success' => true,
                 'data' => [
                     'query' => $validated['query'],
+                    'answer_draft' => $searchService->buildAnswerDraft($validated['query'], $results),
                     'results' => $results,
                     'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'diagnostics' => count($results) === 0 ? $this->buildNoResultDiagnostics($knowledgeBaseId) : null,
@@ -55,6 +56,7 @@ class RagController extends Controller
                 'success' => false,
                 'data' => [
                     'query' => $validated['query'],
+                    'answer_draft' => null,
                     'results' => [],
                     'diagnostics' => $this->buildNoResultDiagnostics($validated['knowledge_base_id'] ?? null),
                 ],
