@@ -65,7 +65,25 @@ export interface RagSearchResult {
   knowledge_base_id: number
   distance: number
   score: number
+  vector_score?: number
+  keyword_score?: number
+  section_score?: number
+  policy_score?: number
   model_key?: string | null
+}
+
+export interface RagAnswerDraftCitation {
+  document_title: string
+  article_no?: string | null
+  chunk_id?: number | null
+}
+
+export interface RagAnswerDraft {
+  style: string
+  answer: string
+  bullets: string[]
+  citations: RagAnswerDraftCitation[]
+  disclaimer?: string | null
 }
 
 export interface RagSearchDiagnostics {
@@ -84,6 +102,7 @@ export interface RagSearchDiagnostics {
 
 export interface RagSearchResponse {
   query: string
+  answer_draft?: RagAnswerDraft | null
   results: RagSearchResult[]
   elapsed_ms?: number
   diagnostics?: RagSearchDiagnostics | null
