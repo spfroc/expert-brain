@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold">知识中心</h1>
-        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档，支持正文生成切片、一键入库、文件上传、链接导入。</p>
+        <p class="text-slate-500 mt-1">维护知识库、标签和知识文档，重点关注文档是否已经切片、向量化、可检索。</p>
       </div>
       <div class="flex gap-2">
         <el-button @click="openTagDialog">新增标签</el-button>
@@ -14,14 +14,14 @@
     </div>
 
     <el-alert
-      title="手工正文保存后可直接点击“一键入库”；文件或链接导入后仍可到任务中心执行解析任务，再向量化。"
+      title="文档能否被问答检索，主要取决于：是否有来源内容、是否已生成切片、当前 embedding 模型是否完成向量化。"
       type="info"
       show-icon
       :closable="false"
     />
 
     <el-row :gutter="16">
-      <el-col :span="8">
+      <el-col :span="7">
         <el-card>
           <template #header>
             <div class="flex items-center justify-between">
@@ -32,22 +32,25 @@
 
           <el-table :data="bases" v-loading="loadingBases" @row-click="selectBase" highlight-current-row>
             <el-table-column prop="name" label="名称" min-width="160" />
-            <el-table-column prop="industry" label="行业" width="100" />
+            <el-table-column prop="industry" label="行业" width="90" />
             <el-table-column label="状态" width="90">
               <template #default="scope"><el-tag>{{ scope.row.status ?? 'active' }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="操作" width="90">
+            <el-table-column label="操作" width="80">
               <template #default="scope"><el-button link type="primary" @click.stop="openBaseDialog(scope.row)">编辑</el-button></template>
             </el-table-column>
           </el-table>
         </el-card>
       </el-col>
 
-      <el-col :span="16">
+      <el-col :span="17">
         <el-card>
           <template #header>
-            <div class="flex items-center justify-between">
-              <span class="font-semibold">文档列表</span>
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <span class="font-semibold">文档列表</span>
+                <span v-if="selectedBaseName" class="ml-2 text-xs text-slate-400">当前知识库：{{ selectedBaseName }}</span>
+              </div>
               <div class="flex gap-2">
                 <el-input v-model="documentKeyword" placeholder="搜索标题/内容" clearable style="width: 220px" @keyup.enter="loadDocuments" />
                 <el-button @click="loadDocuments">搜索</el-button>
@@ -55,23 +58,63 @@
             </div>
           </template>
 
-          <el-table :data="documents" v-loading="loadingDocuments">
-            <el-table-column prop="title" label="标题" min-width="220" />
-            <el-table-column prop="source_type" label="来源" width="110" />
-            <el-table-column prop="status" label="状态" width="100">
-              <template #default="scope"><el-tag>{{ scope.row.status }}</el-tag></template>
-            </el-table-column>
-            <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column label="操作" width="620">
+          <el-table :data="documents" v-loading="loadingDocuments" row-key="id">
+            <el-table-column label="文档" min-width="260">
               <template #default="scope">
-                <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
-                <el-button link type="info" @click="openUploadDialog(scope.row)">上传文件</el-button>
-                <el-button link type="primary" @click="openChunksDialog(scope.row)">切片</el-button>
-                <el-button link type="primary" :loading="chunkingDocumentId === scope.row.id" @click="generateChunks(scope.row.id)">生成切片</el-button>
-                <el-button link type="danger" :loading="embeddingDocumentId === scope.row.id" @click="embedDocument(scope.row.id)">向量化</el-button>
-                <el-button link type="danger" :loading="indexingDocumentId === scope.row.id" @click="indexDocument(scope.row.id)">一键入库</el-button>
-                <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
-                <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
+                <div class="font-medium text-slate-900">{{ scope.row.title }}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs text-slate-400">
+                  <span>{{ scope.row.source_type }}</span>
+                  <span>v{{ scope.row.version }}</span>
+                  <span>业务状态：{{ scope.row.status }}</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="入库状态" width="145">
+              <template #default="scope">
+                <el-tooltip :content="scope.row.diagnostic_message || '暂无诊断信息'" placement="top">
+                  <el-tag :type="diagnosticTagType(scope.row.search_status_type)" effect="plain">
+                    {{ scope.row.search_status_label || '未知' }}
+                  </el-tag>
+                </el-tooltip>
+                <div class="mt-1 text-xs text-slate-400">{{ scope.row.next_action || '-' }}</div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="文件/切片/向量" width="155">
+              <template #default="scope">
+                <div class="text-xs leading-6 text-slate-600">
+                  <div>文件：{{ scope.row.files_count ?? 0 }}</div>
+                  <div>切片：{{ scope.row.chunks_count ?? 0 }}</div>
+                  <div>向量：{{ embeddingCount(scope.row) }}</div>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="最近任务" width="150">
+              <template #default="scope">
+                <template v-if="scope.row.latest_job">
+                  <el-tag :type="jobTagType(scope.row.latest_job.status)" effect="plain">
+                    {{ jobLabel(scope.row.latest_job.status) }}
+                  </el-tag>
+                  <div class="mt-1 text-xs text-slate-400">{{ scope.row.latest_job.job_type }}</div>
+                </template>
+                <span v-else class="text-xs text-slate-400">无任务</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" width="420" fixed="right">
+              <template #default="scope">
+                <div class="flex flex-wrap gap-x-1">
+                  <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
+                  <el-button link type="info" @click="openUploadDialog(scope.row)">上传</el-button>
+                  <el-button link type="primary" @click="openChunksDialog(scope.row)">切片</el-button>
+                  <el-button link type="primary" :loading="chunkingDocumentId === scope.row.id" @click="generateChunks(scope.row.id)">生成切片</el-button>
+                  <el-button link type="danger" :loading="embeddingDocumentId === scope.row.id" @click="embedDocument(scope.row.id)">向量化</el-button>
+                  <el-button link type="danger" :loading="indexingDocumentId === scope.row.id" @click="indexDocument(scope.row.id)">一键入库</el-button>
+                  <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
+                  <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -202,7 +245,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import {
@@ -255,6 +298,8 @@ const editingDocument = ref<KnowledgeDocument | null>(null)
 const uploadingDocument = ref<KnowledgeDocument | null>(null)
 const chunkDocument = ref<KnowledgeDocument | null>(null)
 const selectedUploadFile = ref<File | null>(null)
+
+const selectedBaseName = computed(() => bases.value.find((base) => base.id === selectedBaseId.value)?.name ?? '')
 
 const chunkPagination = reactive<PaginationMeta>({ current_page: 1, from: null, last_page: 1, path: '', per_page: 10, to: null, total: 0 })
 const baseForm = reactive({ name: '', industry: '', description: '', status: 'active' })
@@ -330,7 +375,7 @@ async function submitFileUpload(): Promise<void> {
   if (!uploadingDocument.value) { ElMessage.warning('请先选择文档'); return }
   if (!selectedUploadFile.value) { ElMessage.warning('请选择文件'); return }
   uploadingFile.value = true
-  try { await uploadKnowledgeDocumentFile(uploadingDocument.value.id, selectedUploadFile.value); ElMessage.success('文件已上传，解析任务已创建'); uploadDialogVisible.value = false } finally { uploadingFile.value = false }
+  try { await uploadKnowledgeDocumentFile(uploadingDocument.value.id, selectedUploadFile.value); ElMessage.success('文件已上传，解析任务已创建'); uploadDialogVisible.value = false; await loadDocuments() } finally { uploadingFile.value = false }
 }
 
 function openUrlImportDialog(): void { Object.assign(urlForm, { knowledge_base_id: selectedBaseId.value, title: '', url: '', source_type: 'url' }); urlDialogVisible.value = true }
@@ -355,12 +400,12 @@ function handleChunkPageChange(page: number): void { chunkPagination.current_pag
 
 async function generateChunks(id: number): Promise<void> {
   chunkingDocumentId.value = id
-  try { const result = await chunkKnowledgeDocument(id); ElMessage.success(`生成切片完成：${result.chunk_count} 个`) } finally { chunkingDocumentId.value = null }
+  try { const result = await chunkKnowledgeDocument(id); ElMessage.success(`生成切片完成：${result.chunk_count} 个`); await loadDocuments() } finally { chunkingDocumentId.value = null }
 }
 
 async function embedDocument(id: number): Promise<void> {
   embeddingDocumentId.value = id
-  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`) } finally { embeddingDocumentId.value = null }
+  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`); await loadDocuments() } finally { embeddingDocumentId.value = null }
 }
 
 async function indexDocument(id: number): Promise<void> {
@@ -368,11 +413,41 @@ async function indexDocument(id: number): Promise<void> {
   try {
     const result = await indexKnowledgeDocument(id)
     ElMessage.success(`一键入库完成：切片 ${result.chunk.chunk_count} 个，向量 ${result.embedding.embedded_count} 个`)
+    await loadDocuments()
   } finally { indexingDocumentId.value = null }
 }
 
 async function publishDocument(id: number): Promise<void> { await publishKnowledgeDocument(id); ElMessage.success('文档已发布'); await loadDocuments() }
 async function archiveDocument(id: number): Promise<void> { await archiveKnowledgeDocument(id); ElMessage.success('文档已归档'); await loadDocuments() }
+
+function embeddingCount(row: KnowledgeDocument): number {
+  if (row.active_embedding_model_key) return row.active_model_embeddings_count ?? 0
+  return row.legacy_embeddings_count ?? 0
+}
+
+function diagnosticTagType(type?: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (type === 'success' || type === 'warning' || type === 'danger' || type === 'info') return type
+  return 'info'
+}
+
+function jobTagType(status?: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'completed' || status === 'success') return 'success'
+  if (status === 'failed') return 'danger'
+  if (status === 'running' || status === 'processing' || status === 'pending') return 'warning'
+  return 'info'
+}
+
+function jobLabel(status?: string): string {
+  const map: Record<string, string> = {
+    pending: '待处理',
+    running: '执行中',
+    processing: '执行中',
+    completed: '已完成',
+    success: '已完成',
+    failed: '失败'
+  }
+  return status ? (map[status] ?? status) : '未知'
+}
 
 onMounted(async () => { await loadBases(); await loadDocuments() })
 </script>
