@@ -68,10 +68,25 @@ export interface RagSearchResult {
   model_key?: string | null
 }
 
+export interface RagSearchDiagnostics {
+  status: 'no_documents' | 'no_chunks' | 'no_embeddings' | 'low_similarity' | string
+  reason: string
+  next_action: string
+  knowledge_base_id?: number | null
+  knowledge_base_name?: string | null
+  active_embedding_model_key?: string | null
+  documents_count: number
+  chunks_count: number
+  legacy_embeddings_count: number
+  active_model_embeddings_count: number
+  effective_embeddings_count: number
+}
+
 export interface RagSearchResponse {
   query: string
   results: RagSearchResult[]
   elapsed_ms?: number
+  diagnostics?: RagSearchDiagnostics | null
 }
 
 export async function listKnowledgeBases(params: ListParams = {}): Promise<PaginatedResponse<KnowledgeBase>> {
