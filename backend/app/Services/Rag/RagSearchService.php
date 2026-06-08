@@ -47,7 +47,8 @@ class RagSearchService
             $vectorScore = 1 - $distance;
             $keywordScore = $this->keywordScore($row->content, $row->document_title, $terms);
             $sectionScore = $this->sectionScore($row->content, $query, $expandedQuery);
-            $finalScore = ($vectorScore * 0.65) + ($keywordScore * 0.25) + ($sectionScore * 0.10);
+            $policyScore = $this->policyRiskScore($row->content, $query);
+            $finalScore = ($vectorScore * 0.55) + ($keywordScore * 0.20) + ($sectionScore * 0.10) + ($policyScore * 0.15);
 
             return [
                 'chunk_id' => $row->chunk_id,
@@ -65,6 +66,7 @@ class RagSearchService
                 'vector_score' => $vectorScore,
                 'keyword_score' => $keywordScore,
                 'section_score' => $sectionScore,
+                'policy_score' => $policyScore,
                 'model_key' => $row->model_key ?? $activeModel?->model_key ?? 'legacy',
             ];
         }, $rows);
@@ -86,6 +88,55 @@ class RagSearchService
         ]);
 
         return $results;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @return array<string, mixed>|null
+     */
+    public function buildAnswerDraft(string $query, array $results): ?array
+    {
+        if ($results === []) {
+            return null;
+        }
+
+        $bullets = [];
+        $citations = [];
+
+        foreach ($results as $result) {
+            $article = $result['metadata']['article_no'] ?? null;
+            $documentTitle = $result['document_title'] ?? '知识文档';
+            $content = $this->normalizeWhitespace((string) ($result['content'] ?? ''));
+            $point = $this->summarizePolicyPoint($content, $query);
+
+            if ($point === null) {
+                continue;
+            }
+
+            $citation = $article ? "{$documentTitle}{$article}" : $documentTitle;
+            $bullets[] = $point.'（依据：'.$citation.'）';
+            $citations[] = [
+                'document_title' => $documentTitle,
+                'article_no' => $article,
+                'chunk_id' => $result['chunk_id'] ?? null,
+            ];
+
+            if (count($bullets) >= 4) {
+                break;
+            }
+        }
+
+        if ($bullets === []) {
+            return null;
+        }
+
+        return [
+            'style' => 'extractive_policy_summary',
+            'answer' => "建议重点注意：\n".implode("\n", array_map(fn ($line) => '1. '.$line, array_values($bullets))),
+            'bullets' => $bullets,
+            'citations' => $citations,
+            'disclaimer' => '以上为基于已入库法规条文的检索式整理，不等同于正式法律意见。',
+        ];
     }
 
     /**
@@ -186,6 +237,11 @@ SQL;
             '队列' => ['queue', 'queues', 'jobs'],
             '模型' => ['model', 'Eloquent'],
             '一对多' => ['one to many', 'hasMany'],
+            '无线电' => ['无线电台', '无线电频率', '无线电发射设备', '电台执照', '有害干扰', '无线电管理机构'],
+            '爱好者' => ['个人', '设置使用', '无线电台', '无线电设备'],
+            '开发' => ['研制', '生产', '测试', '无线电发射设备'],
+            '测试' => ['电波参数测试', '电子监测设备', '发射设备', '临时动用'],
+            '触犯法律' => ['擅自设置', '使用无线电台', '干扰无线电业务', '罚则', '警告', '没收设备', '罚款'],
         ];
 
         $expanded = [$query];
@@ -203,7 +259,7 @@ SQL;
      */
     private function extractTerms(string $query): array
     {
-        preg_match_all('/[a-zA-Z_:\\{}]+|[\x{4e00}-\x{9fa5}]{2,}/u', mb_strtolower($query), $matches);
+        preg_match_all('/[a-zA-Z_:\{}]+|[\x{4e00}-\x{9fa5}]{2,}/u', mb_strtolower($query), $matches);
 
         return array_values(array_unique(array_filter($matches[0] ?? [], fn ($term) => mb_strlen($term) >= 2)));
     }
@@ -246,8 +302,74 @@ SQL;
         if (str_contains($expanded, '示例') && str_contains($lower, 'route::get')) {
             $score += 0.2;
         }
+        if (str_contains($expanded, '无线电') && str_contains($lower, '无线电')) {
+            $score += 0.3;
+        }
+        if ((str_contains($expanded, '触犯法律') || str_contains($expanded, '罚则')) && (str_contains($lower, '罚款') || str_contains($lower, '没收') || str_contains($lower, '警告'))) {
+            $score += 0.4;
+        }
 
         return min(1.0, $score);
+    }
+
+    private function policyRiskScore(string $content, string $query): float
+    {
+        $score = 0.0;
+        $lower = mb_strtolower($content);
+        $queryLower = mb_strtolower($query);
+
+        foreach (['未经', '不得', '擅自', '应当', '批准', '报告', '干扰', '罚款', '没收', '电台执照'] as $term) {
+            if (str_contains($lower, $term)) {
+                $score += 0.12;
+            }
+        }
+
+        if (str_contains($queryLower, '开发') || str_contains($queryLower, '测试')) {
+            foreach (['研制', '生产', '测试', '发射设备', '电波参数测试'] as $term) {
+                if (str_contains($lower, $term)) {
+                    $score += 0.15;
+                }
+            }
+        }
+
+        return min(1.0, $score);
+    }
+
+    private function summarizePolicyPoint(string $content, string $query): ?string
+    {
+        $text = $this->normalizeWhitespace($content);
+        $queryLower = mb_strtolower($query);
+
+        if (str_contains($text, '擅自设置') || str_contains($text, '使用无线电台')) {
+            return '不要擅自设置、使用无线电台站；涉及电台站、频率、核定项目，应按规定办理批准或执照。';
+        }
+        if (str_contains($text, '发射设备') || str_contains($text, '研制') || str_contains($text, '生产') || str_contains($text, '进口')) {
+            return '开发、研制、生产、进口或测试无线电发射设备时，要确认设备和测试行为符合无线电管理要求。';
+        }
+        if (str_contains($text, '有害干扰') || str_contains($text, '干扰无线电业务')) {
+            return '测试和使用设备时要避免造成有害干扰；一旦发生干扰，应停止相关操作并配合处理。';
+        }
+        if (str_contains($text, '未经国家无线电管理机构批准') || str_contains($text, '电波参数测试')) {
+            return '涉及电波参数测试、监测设备或特殊测试活动时，不要在未经批准的情况下开展。';
+        }
+        if (str_contains($text, '紧急情况') || str_contains($text, '及时向无线电管理机构报告')) {
+            return '只有危及人民生命财产安全等紧急情况，才可临时动用未经批准设备，并应及时报告。';
+        }
+        if (str_contains($text, '罚款') || str_contains($text, '没收') || str_contains($text, '警告')) {
+            return '违规可能面临警告、查封或没收设备、没收违法所得、罚款，严重时还可能吊销电台执照。';
+        }
+
+        if (str_contains($queryLower, '无线电')) {
+            return mb_substr($text, 0, 90);
+        }
+
+        return null;
+    }
+
+    private function normalizeWhitespace(string $text): string
+    {
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
     }
 
     /**
