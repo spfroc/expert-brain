@@ -9,7 +9,7 @@
           </div>
           <h1 class="mt-3 text-2xl font-semibold text-slate-900">AI 问答</h1>
           <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-            当前页面用于验证“问题 → 向量化 → 召回切片”的链路。先看召回是否正确，再接入大模型生成正式回答。
+            当前页面用于验证“问题 → 向量化 → 召回切片 → 回答草稿”的链路。回答草稿优先使用后端基于条文整理的简明版本。
           </p>
         </div>
         <div class="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
@@ -30,7 +30,7 @@
     </div>
 
     <el-alert
-      title="当前回答草稿不是大模型生成，而是直接基于召回切片整理。若召回结果不相关，应优先检查知识库是否切片、是否向量化、是否选错知识库。"
+      title="当前回答草稿为检索式整理，不等同于正式法律意见。若召回结果不相关，应优先检查知识库、切片、向量和模型覆盖率。"
       type="info"
       show-icon
       :closable="false"
@@ -125,7 +125,8 @@
 
       <div v-if="results.length > 0" class="space-y-3">
         <p class="text-sm text-slate-600">根据当前知识库召回结果，可以先这样回答：</p>
-        <div class="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">{{ answerDraft }}</div>
+        <div class="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">{{ answerDraftText }}</div>
+        <div v-if="answerDraft?.disclaimer" class="text-xs text-slate-400">{{ answerDraft.disclaimer }}</div>
       </div>
       <div v-else-if="diagnostics" class="space-y-4">
         <el-alert
@@ -188,6 +189,7 @@
             <div class="flex flex-wrap gap-2 text-xs">
               <el-tag :type="scoreTagType(item.score)" effect="plain">score {{ item.score.toFixed(4) }}</el-tag>
               <el-tag effect="plain">distance {{ item.distance.toFixed(4) }}</el-tag>
+              <el-tag v-if="item.policy_score !== undefined" effect="plain">policy {{ item.policy_score.toFixed(2) }}</el-tag>
             </div>
           </div>
           <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{{ item.content }}</div>
@@ -202,7 +204,7 @@
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listKnowledgeBases, searchRag, type RagSearchDiagnostics, type RagSearchResult } from '@/api/knowledge'
+import { listKnowledgeBases, searchRag, type RagAnswerDraft, type RagSearchDiagnostics, type RagSearchResult } from '@/api/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 const bases = ref<KnowledgeBase[]>([])
@@ -212,20 +214,18 @@ const topK = ref(5)
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<RagSearchResult[]>([])
+const answerDraft = ref<RagAnswerDraft | null>(null)
 const diagnostics = ref<RagSearchDiagnostics | null>(null)
 const elapsedMs = ref<number | null>(null)
 const errorMessage = ref('')
 
 const questionExamples = [
   '无线电爱好者平时使用无线电设备应注意哪些法律风险？',
-  '政府采购供应商参加采购活动需要具备哪些条件？',
-  '路由中添加路径参数示例。'
+  '我是一名无线电爱好者，在实际开发测试时应该注意哪些事项避免触犯法律？',
+  '政府采购供应商参加采购活动需要具备哪些条件？'
 ]
 
-const selectedBaseName = computed(() => {
-  return bases.value.find((base) => base.id === selectedBaseId.value)?.name ?? ''
-})
-
+const selectedBaseName = computed(() => bases.value.find((base) => base.id === selectedBaseId.value)?.name ?? '')
 const bestScore = computed(() => results.value.length > 0 ? Math.max(...results.value.map((item) => item.score)) : null)
 const bestScoreText = computed(() => bestScore.value === null ? '-' : bestScore.value.toFixed(3))
 const isLowConfidence = computed(() => results.value.length > 0 && (bestScore.value ?? 0) < 0.35)
@@ -235,18 +235,15 @@ const bestScoreClass = computed(() => {
 })
 const diagnosticTagType = computed((): 'success' | 'warning' | 'danger' | 'info' => {
   if (!diagnostics.value) return 'info'
-  if (diagnostics.value.status === 'low_similarity') return 'warning'
-  if (diagnostics.value.status === 'no_documents' || diagnostics.value.status === 'no_chunks' || diagnostics.value.status === 'no_embeddings') return 'warning'
+  if (['low_similarity', 'no_documents', 'no_chunks', 'no_embeddings'].includes(diagnostics.value.status)) return 'warning'
   return 'info'
 })
 
-const answerDraft = computed(() => {
+const answerDraftText = computed(() => {
+  if (answerDraft.value?.answer) return answerDraft.value.answer
   if (results.value.length === 0) return ''
 
-  const lines = results.value.slice(0, 3).map((item, index) => {
-    return `${index + 1}. 【${item.document_title}】\n${item.content}`
-  })
-
+  const lines = results.value.slice(0, 3).map((item, index) => `${index + 1}. 【${item.document_title}】\n${item.content}`)
   return [
     `问题：${query.value}`,
     '',
@@ -269,6 +266,7 @@ function fillExample(): void {
 function clearSearch(): void {
   query.value = ''
   results.value = []
+  answerDraft.value = null
   diagnostics.value = null
   elapsedMs.value = null
   searched.value = false
@@ -285,15 +283,18 @@ async function runSearch(): Promise<void> {
   errorMessage.value = ''
   elapsedMs.value = null
   diagnostics.value = null
+  answerDraft.value = null
   try {
     const response = await searchRag(query.value, selectedBaseId.value, topK.value)
     results.value = response.results
+    answerDraft.value = response.answer_draft ?? null
     diagnostics.value = response.diagnostics ?? null
     elapsedMs.value = response.elapsed_ms ?? null
     searched.value = true
   } catch (error) {
     searched.value = true
     results.value = []
+    answerDraft.value = null
     if (axios.isAxiosError(error)) {
       diagnostics.value = error.response?.data?.data?.diagnostics ?? null
       if (error.code === 'ECONNABORTED') {
