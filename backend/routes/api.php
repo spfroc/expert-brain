@@ -44,6 +44,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('knowledge-documents/{knowledgeDocument}/embed', [DocumentIngestionController::class, 'embed']);
         Route::post('knowledge-documents/{knowledgeDocument}/index', [DocumentIngestionController::class, 'indexDocument']);
         Route::post('knowledge-documents/import-url', [DocumentIngestionController::class, 'importUrl']);
+        Route::post('knowledge-documents/import-urls', [DocumentIngestionController::class, 'importUrls']);
         Route::get('document-ingestion-jobs', [DocumentIngestionController::class, 'index']);
         Route::post('document-ingestion-jobs/{documentIngestionJob}/process', [DocumentIngestionController::class, 'process']);
         Route::post('rag/search', [RagController::class, 'search']);
