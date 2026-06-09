@@ -33,6 +33,30 @@ export interface ImportUrlPayload {
   source_type?: 'url' | 'policy' | 'platform_doc' | 'notice'
 }
 
+export interface ImportUrlsPayload {
+  knowledge_base_id: number | null
+  raw_urls?: string | null
+  urls?: string[]
+  source_type?: 'url' | 'policy' | 'platform_doc' | 'notice'
+  auto_process?: boolean
+  auto_embed?: boolean
+  deduplicate?: boolean
+}
+
+export interface ImportUrlsResultItem {
+  url: string
+  status: 'created' | 'skipped' | string
+  reason?: string | null
+  document_id?: number
+  job_id?: number
+}
+
+export interface ImportUrlsResult {
+  created_count: number
+  skipped_count: number
+  items: ImportUrlsResultItem[]
+}
+
 export interface EmbedDocumentResult {
   embedded_count: number
   provider?: string | null
@@ -174,6 +198,11 @@ export async function uploadKnowledgeDocumentFile(documentId: number, file: File
 
 export async function importKnowledgeDocumentUrl(payload: ImportUrlPayload): Promise<void> {
   await http.post('/knowledge-documents/import-url', payload)
+}
+
+export async function importKnowledgeDocumentUrls(payload: ImportUrlsPayload): Promise<ImportUrlsResult> {
+  const response = await http.post<{ data: ImportUrlsResult }>('/knowledge-documents/import-urls', payload)
+  return response.data.data
 }
 
 export async function listDocumentIngestionJobs(params: ListParams = {}): Promise<PaginatedResponse<DocumentIngestionJob>> {
