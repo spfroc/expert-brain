@@ -10,7 +10,6 @@ use App\Models\DocumentFile;
 use App\Models\DocumentIngestionJob;
 use App\Models\KnowledgeDocument;
 use App\Services\DocumentIngestion\DocumentEmbeddingService;
-use App\Services\DocumentIngestion\DocumentIngestionProcessor;
 use App\Services\DocumentIngestion\ManualDocumentChunkService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -108,35 +107,15 @@ class DocumentIngestionController extends Controller
             'auto_embed' => ['nullable', 'boolean'],
         ]);
 
-        $document = KnowledgeDocument::query()->create([
-            'knowledge_base_id' => $validated['knowledge_base_id'],
-            'title' => $validated['title'] ?? $validated['url'],
-            'source_type' => $validated['source_type'] ?? 'url',
-            'source_url' => $validated['url'],
-            'version' => '1.0',
-            'status' => 'draft',
-            'created_by' => $request->user()?->id,
-            'metadata' => [
-                'ingestion_source' => 'url',
-            ],
-        ]);
-
-        $job = DocumentIngestionJob::query()->create([
-            'knowledge_document_id' => $document->id,
-            'job_type' => 'url_fetch',
-            'status' => 'pending',
-            'progress' => 0,
-            'source_url' => $validated['url'],
-            'created_by' => $request->user()?->id,
-            'metadata' => [
-                'auto_process' => $request->boolean('auto_process', true),
-                'auto_embed' => $request->boolean('auto_embed', true),
-            ],
-        ]);
-
-        if ($request->boolean('auto_process', true)) {
-            RunDocumentIngestionJob::dispatch($job->id, $request->boolean('auto_embed', true));
-        }
+        [$document, $job] = $this->createUrlImportJob(
+            knowledgeBaseId: (int) $validated['knowledge_base_id'],
+            url: $validated['url'],
+            title: $validated['title'] ?? null,
+            sourceType: $validated['source_type'] ?? 'url',
+            userId: $request->user()?->id,
+            autoProcess: $request->boolean('auto_process', true),
+            autoEmbed: $request->boolean('auto_embed', true),
+        );
 
         return response()->json([
             'success' => true,
@@ -147,6 +126,83 @@ class DocumentIngestionController extends Controller
             'message' => $request->boolean('auto_process', true)
                 ? 'document created and queued for ingestion'
                 : 'document created and ingestion job created',
+            'errors' => null,
+        ], 202);
+    }
+
+    public function importUrls(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'knowledge_base_id' => ['required', 'integer', 'exists:knowledge_bases,id'],
+            'urls' => ['required_without:raw_urls', 'array', 'max:200'],
+            'urls.*' => ['required', 'url', 'max:2000'],
+            'raw_urls' => ['required_without:urls', 'nullable', 'string', 'max:200000'],
+            'source_type' => ['nullable', Rule::in(['url', 'policy', 'platform_doc', 'notice'])],
+            'auto_process' => ['nullable', 'boolean'],
+            'auto_embed' => ['nullable', 'boolean'],
+            'deduplicate' => ['nullable', 'boolean'],
+        ]);
+
+        $urls = $this->normalizeUrlList($validated['urls'] ?? [], $validated['raw_urls'] ?? null);
+        if ($urls === []) {
+            return response()->json([
+                'success' => false,
+                'data' => ['created_count' => 0, 'skipped_count' => 0, 'items' => []],
+                'message' => 'no valid urls found',
+                'errors' => ['urls' => ['没有找到有效 URL。']],
+            ], 422);
+        }
+
+        $items = [];
+        $createdCount = 0;
+        $skippedCount = 0;
+        $deduplicate = $request->boolean('deduplicate', true);
+
+        foreach ($urls as $url) {
+            if ($deduplicate) {
+                $exists = KnowledgeDocument::query()
+                    ->where('knowledge_base_id', $validated['knowledge_base_id'])
+                    ->where('source_url', $url)
+                    ->exists();
+
+                if ($exists) {
+                    $skippedCount++;
+                    $items[] = [
+                        'url' => $url,
+                        'status' => 'skipped',
+                        'reason' => 'source_url already exists in this knowledge base',
+                    ];
+                    continue;
+                }
+            }
+
+            [$document, $job] = $this->createUrlImportJob(
+                knowledgeBaseId: (int) $validated['knowledge_base_id'],
+                url: $url,
+                title: null,
+                sourceType: $validated['source_type'] ?? 'url',
+                userId: $request->user()?->id,
+                autoProcess: $request->boolean('auto_process', true),
+                autoEmbed: $request->boolean('auto_embed', true),
+            );
+
+            $createdCount++;
+            $items[] = [
+                'url' => $url,
+                'status' => 'created',
+                'document_id' => $document->id,
+                'job_id' => $job->id,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'created_count' => $createdCount,
+                'skipped_count' => $skippedCount,
+                'items' => $items,
+            ],
+            'message' => 'batch import queued',
             'errors' => null,
         ], 202);
     }
@@ -207,5 +263,81 @@ class DocumentIngestionController extends Controller
             'message' => 'ok',
             'errors' => null,
         ]);
+    }
+
+    /**
+     * @return array{0:KnowledgeDocument,1:DocumentIngestionJob}
+     */
+    private function createUrlImportJob(
+        int $knowledgeBaseId,
+        string $url,
+        ?string $title,
+        string $sourceType,
+        ?int $userId,
+        bool $autoProcess,
+        bool $autoEmbed,
+    ): array {
+        $document = KnowledgeDocument::query()->create([
+            'knowledge_base_id' => $knowledgeBaseId,
+            'title' => $title ?: $this->guessTitleFromUrl($url),
+            'source_type' => $sourceType,
+            'source_url' => $url,
+            'version' => '1.0',
+            'status' => 'draft',
+            'created_by' => $userId,
+            'metadata' => [
+                'ingestion_source' => 'url',
+            ],
+        ]);
+
+        $job = DocumentIngestionJob::query()->create([
+            'knowledge_document_id' => $document->id,
+            'job_type' => 'url_fetch',
+            'status' => 'pending',
+            'progress' => 0,
+            'source_url' => $url,
+            'created_by' => $userId,
+            'metadata' => [
+                'auto_process' => $autoProcess,
+                'auto_embed' => $autoEmbed,
+            ],
+        ]);
+
+        if ($autoProcess) {
+            RunDocumentIngestionJob::dispatch($job->id, $autoEmbed);
+        }
+
+        return [$document, $job];
+    }
+
+    /**
+     * @param array<int, string> $urls
+     * @return array<int, string>
+     */
+    private function normalizeUrlList(array $urls, ?string $rawUrls): array
+    {
+        $items = $urls;
+        if ($rawUrls) {
+            preg_match_all('/https?:\/\/[^\s,，;；"\'<>]+/u', $rawUrls, $matches);
+            $items = array_merge($items, $matches[0] ?? []);
+        }
+
+        return array_values(array_unique(array_filter(array_map(function ($url): ?string {
+            $url = trim((string) $url);
+            if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
+                return null;
+            }
+
+            return $url;
+        }, $items))));
+    }
+
+    private function guessTitleFromUrl(string $url): string
+    {
+        $path = parse_url($url, PHP_URL_PATH) ?: $url;
+        $basename = basename($path);
+        $decoded = urldecode($basename ?: $url);
+
+        return mb_substr($decoded, 0, 180) ?: $url;
     }
 }
