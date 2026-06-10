@@ -10,6 +10,8 @@ use App\Models\KnowledgeDocument;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class KnowledgeDocumentController extends Controller
 {
@@ -109,12 +111,31 @@ class KnowledgeDocumentController extends Controller
 
     public function destroy(KnowledgeDocument $knowledgeDocument): JsonResponse
     {
-        $knowledgeDocument->delete();
+        $knowledgeDocument->load(['files', 'chunks.embeddings', 'ingestionJobs']);
+
+        DB::transaction(function () use ($knowledgeDocument): void {
+            $knowledgeDocument->tags()->detach();
+            $knowledgeDocument->ingestionJobs()->delete();
+
+            foreach ($knowledgeDocument->chunks as $chunk) {
+                $chunk->embeddings()->delete();
+            }
+            $knowledgeDocument->chunks()->delete();
+
+            $knowledgeDocument->files()->delete();
+            $knowledgeDocument->delete();
+        });
+
+        foreach ($knowledgeDocument->files as $file) {
+            if ($file->disk && $file->path && Storage::disk($file->disk)->exists($file->path)) {
+                Storage::disk($file->disk)->delete($file->path);
+            }
+        }
 
         return response()->json([
             'success' => true,
             'data' => null,
-            'message' => 'ok',
+            'message' => 'deleted',
             'errors' => null,
         ]);
     }
