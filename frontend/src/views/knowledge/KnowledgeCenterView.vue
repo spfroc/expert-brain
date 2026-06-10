@@ -10,6 +10,7 @@
         <el-button type="primary" @click="openBaseDialog()">新增知识库</el-button>
         <el-button type="success" @click="openDocumentDialog()">新增文档</el-button>
         <el-button type="warning" @click="openUrlImportDialog">导入链接</el-button>
+        <el-button type="danger" plain @click="openBatchUrlImportDialog">批量导入链接</el-button>
       </div>
     </div>
 
@@ -189,7 +190,7 @@
     </el-dialog>
 
     <el-dialog v-model="uploadDialogVisible" title="上传文件并创建入库任务" width="560px">
-      <el-alert title="上传后会创建解析任务，请到任务中心执行；或者后续可扩展为自动执行。" type="info" show-icon :closable="false" class="mb-4" />
+      <el-alert title="上传后会创建解析任务，并自动交给队列执行。" type="info" show-icon :closable="false" class="mb-4" />
       <el-upload drag :auto-upload="false" :limit="1" :on-change="handleFileChange" :on-remove="handleFileRemove">
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到这里，或点击选择文件</div>
@@ -225,6 +226,56 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="batchUrlDialogVisible" title="批量导入链接" width="760px">
+      <el-alert title="一行一个 URL。提交后会批量创建文档和入库任务，默认自动排队抓取、切片、向量化。" type="info" show-icon :closable="false" class="mb-4" />
+      <el-form label-position="top">
+        <el-form-item label="所属知识库">
+          <el-select v-model="batchUrlForm.knowledge_base_id" placeholder="请选择知识库" class="w-full">
+            <el-option v-for="base in bases" :key="base.id" :label="base.name" :value="base.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="链接列表">
+          <el-input v-model="batchUrlForm.raw_urls" type="textarea" :rows="10" placeholder="https://example.com/a.html&#10;https://example.com/b.html" />
+          <div class="mt-1 text-xs text-slate-400">已识别 {{ batchUrlCount }} 个 URL</div>
+        </el-form-item>
+        <el-row :gutter="12">
+          <el-col :span="8">
+            <el-form-item label="来源类型">
+              <el-select v-model="batchUrlForm.source_type" class="w-full">
+                <el-option label="普通链接" value="url" />
+                <el-option label="政策法规" value="policy" />
+                <el-option label="平台文档" value="platform_doc" />
+                <el-option label="通知公告" value="notice" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="16">
+            <el-form-item label="导入选项">
+              <div class="flex flex-wrap gap-4">
+                <el-checkbox v-model="batchUrlForm.deduplicate">跳过已存在链接</el-checkbox>
+                <el-checkbox v-model="batchUrlForm.auto_process">自动抓取切片</el-checkbox>
+                <el-checkbox v-model="batchUrlForm.auto_embed">自动向量化</el-checkbox>
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <div v-if="batchImportResult" class="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+        <div class="font-medium text-slate-800">导入结果：创建 {{ batchImportResult.created_count }} 个，跳过 {{ batchImportResult.skipped_count }} 个</div>
+        <div class="mt-2 max-h-40 overflow-y-auto text-xs leading-6">
+          <div v-for="item in batchImportResult.items" :key="item.url" class="truncate">
+            <el-tag size="small" :type="item.status === 'created' ? 'success' : 'info'" effect="plain">{{ item.status }}</el-tag>
+            <span class="ml-2">{{ item.url }}</span>
+            <span v-if="item.reason" class="ml-2 text-slate-400">{{ item.reason }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="batchUrlDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="importingUrls" @click="submitBatchUrlImport">批量导入</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="chunksDialogVisible" :title="`文档切片：${chunkDocument?.title ?? ''}`" width="900px">
       <div class="flex items-center gap-2 mb-4">
         <el-input v-model="chunkKeyword" placeholder="搜索切片内容" clearable style="width: 260px" @keyup.enter="loadChunks" />
@@ -256,6 +307,7 @@ import {
   createKnowledgeTag,
   embedKnowledgeDocument,
   importKnowledgeDocumentUrl,
+  importKnowledgeDocumentUrls,
   indexKnowledgeDocument,
   listDocumentChunks,
   listKnowledgeBases,
@@ -263,7 +315,8 @@ import {
   publishKnowledgeDocument,
   updateKnowledgeBase,
   updateKnowledgeDocument,
-  uploadKnowledgeDocumentFile
+  uploadKnowledgeDocumentFile,
+  type ImportUrlsResult
 } from '@/api/knowledge'
 import type { DocumentChunk, KnowledgeBase, KnowledgeDocument, PaginationMeta } from '@/types/knowledge'
 
@@ -282,6 +335,7 @@ const savingTag = ref(false)
 const savingDocument = ref(false)
 const uploadingFile = ref(false)
 const importingUrl = ref(false)
+const importingUrls = ref(false)
 const chunkingDocumentId = ref<number | null>(null)
 const embeddingDocumentId = ref<number | null>(null)
 const indexingDocumentId = ref<number | null>(null)
@@ -291,6 +345,7 @@ const tagDialogVisible = ref(false)
 const documentDialogVisible = ref(false)
 const uploadDialogVisible = ref(false)
 const urlDialogVisible = ref(false)
+const batchUrlDialogVisible = ref(false)
 const chunksDialogVisible = ref(false)
 
 const editingBase = ref<KnowledgeBase | null>(null)
@@ -298,14 +353,17 @@ const editingDocument = ref<KnowledgeDocument | null>(null)
 const uploadingDocument = ref<KnowledgeDocument | null>(null)
 const chunkDocument = ref<KnowledgeDocument | null>(null)
 const selectedUploadFile = ref<File | null>(null)
+const batchImportResult = ref<ImportUrlsResult | null>(null)
 
 const selectedBaseName = computed(() => bases.value.find((base) => base.id === selectedBaseId.value)?.name ?? '')
+const batchUrlCount = computed(() => extractUrls(batchUrlForm.raw_urls).length)
 
 const chunkPagination = reactive<PaginationMeta>({ current_page: 1, from: null, last_page: 1, path: '', per_page: 10, to: null, total: 0 })
 const baseForm = reactive({ name: '', industry: '', description: '', status: 'active' })
 const tagForm = reactive({ name: '', tag_type: '' })
 const documentForm = reactive({ knowledge_base_id: null as number | null, title: '', summary: '', content: '', source_type: 'manual', source_url: '', version: '1.0', status: 'draft' })
 const urlForm = reactive({ knowledge_base_id: null as number | null, title: '', url: '', source_type: 'url' as 'url' | 'policy' | 'platform_doc' | 'notice' })
+const batchUrlForm = reactive({ knowledge_base_id: null as number | null, raw_urls: '', source_type: 'url' as 'url' | 'policy' | 'platform_doc' | 'notice', auto_process: true, auto_embed: true, deduplicate: true })
 
 function resetBaseForm(): void { editingBase.value = null; Object.assign(baseForm, { name: '', industry: '', description: '', status: 'active' }) }
 function resetDocumentForm(): void { editingDocument.value = null; Object.assign(documentForm, { knowledge_base_id: selectedBaseId.value, title: '', summary: '', content: '', source_type: 'manual', source_url: '', version: '1.0', status: 'draft' }) }
@@ -386,6 +444,29 @@ async function submitUrlImport(): Promise<void> {
   try { await importKnowledgeDocumentUrl(urlForm); ElMessage.success('链接已导入，抓取任务已创建'); urlDialogVisible.value = false; await loadDocuments() } finally { importingUrl.value = false }
 }
 
+function openBatchUrlImportDialog(): void {
+  Object.assign(batchUrlForm, { knowledge_base_id: selectedBaseId.value, raw_urls: '', source_type: 'url', auto_process: true, auto_embed: true, deduplicate: true })
+  batchImportResult.value = null
+  batchUrlDialogVisible.value = true
+}
+
+async function submitBatchUrlImport(): Promise<void> {
+  if (!batchUrlForm.knowledge_base_id) { ElMessage.warning('请先选择知识库'); return }
+  if (batchUrlCount.value === 0) { ElMessage.warning('请粘贴至少一个有效 URL'); return }
+  importingUrls.value = true
+  try {
+    const result = await importKnowledgeDocumentUrls(batchUrlForm)
+    batchImportResult.value = result
+    ElMessage.success(`批量导入完成：创建 ${result.created_count} 个，跳过 ${result.skipped_count} 个`)
+    await loadDocuments()
+  } finally { importingUrls.value = false }
+}
+
+function extractUrls(text: string): string[] {
+  const matches = text.match(/https?:\/\/[^\s,，;；"'<>]+/g) ?? []
+  return Array.from(new Set(matches.map((url) => url.trim()).filter(Boolean)))
+}
+
 async function openChunksDialog(row: KnowledgeDocument): Promise<void> { chunkDocument.value = row; chunkKeyword.value = ''; chunkPagination.current_page = 1; chunksDialogVisible.value = true; await loadChunks() }
 async function loadChunks(): Promise<void> {
   if (!chunkDocument.value) return
@@ -405,7 +486,7 @@ async function generateChunks(id: number): Promise<void> {
 
 async function embedDocument(id: number): Promise<void> {
   embeddingDocumentId.value = id
-  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`); await loadDocuments() } finally { embeddingDocumentId.value = null }
+  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? result.model_key ?? 'unknown'}`); await loadDocuments() } finally { embeddingDocumentId.value = null }
 }
 
 async function indexDocument(id: number): Promise<void> {
