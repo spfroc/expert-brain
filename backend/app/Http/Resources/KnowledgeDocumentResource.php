@@ -17,15 +17,15 @@ class KnowledgeDocumentResource extends JsonResource
         $legacyEmbeddingsCount = (int) ($this->legacy_embeddings_count ?? 0);
         $activeModelEmbeddingsCount = (int) ($this->active_model_embeddings_count ?? 0);
         $activeEmbeddingModelKey = $this->active_embedding_model_key ?? null;
-        $latestJob = $this->whenLoaded('latestIngestionJob');
+        $latestJob = $this->relationLoaded('latestIngestionJob') ? $this->latestIngestionJob : null;
         $diagnostics = $this->buildSearchDiagnostics(
             $filesCount,
             $chunksCount,
             $legacyEmbeddingsCount,
             $activeModelEmbeddingsCount,
             $activeEmbeddingModelKey,
-            is_object($latestJob) ? $latestJob?->status : null,
-            is_object($latestJob) ? $latestJob?->error_message : null,
+            $latestJob?->status,
+            $latestJob?->error_message,
         );
 
         return [
@@ -48,7 +48,7 @@ class KnowledgeDocumentResource extends JsonResource
             'legacy_embeddings_count' => $legacyEmbeddingsCount,
             'active_model_embeddings_count' => $activeModelEmbeddingsCount,
             'active_embedding_model_key' => $activeEmbeddingModelKey,
-            'latest_job' => is_object($latestJob) ? [
+            'latest_job' => $latestJob ? [
                 'id' => $latestJob->id,
                 'job_type' => $latestJob->job_type,
                 'status' => $latestJob->status,
