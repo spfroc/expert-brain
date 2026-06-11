@@ -53,8 +53,8 @@
                 <span v-if="selectedBaseName" class="ml-2 text-xs text-slate-400">当前知识库：{{ selectedBaseName }}</span>
               </div>
               <div class="flex gap-2">
-                <el-input v-model="documentKeyword" placeholder="搜索标题/内容" clearable style="width: 220px" @keyup.enter="loadDocuments" />
-                <el-button @click="loadDocuments">搜索</el-button>
+                <el-input v-model="documentKeyword" placeholder="搜索标题/内容" clearable style="width: 220px" @keyup.enter="searchDocuments" @clear="searchDocuments" />
+                <el-button @click="searchDocuments">搜索</el-button>
               </div>
             </div>
           </template>
@@ -120,6 +120,19 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div class="flex justify-end mt-4">
+            <el-pagination
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              :total="documentPagination.total"
+              :page-size="documentPagination.per_page"
+              :page-sizes="[20, 50, 100, 200]"
+              :current-page="documentPagination.current_page"
+              @current-change="handleDocumentPageChange"
+              @size-change="handleDocumentSizeChange"
+            />
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -361,6 +374,7 @@ const batchImportResult = ref<ImportUrlsResult | null>(null)
 const selectedBaseName = computed(() => bases.value.find((base) => base.id === selectedBaseId.value)?.name ?? '')
 const batchUrlCount = computed(() => extractUrls(batchUrlForm.raw_urls).length)
 
+const documentPagination = reactive<PaginationMeta>({ current_page: 1, from: null, last_page: 1, path: '', per_page: 50, to: null, total: 0 })
 const chunkPagination = reactive<PaginationMeta>({ current_page: 1, from: null, last_page: 1, path: '', per_page: 10, to: null, total: 0 })
 const baseForm = reactive({ name: '', industry: '', description: '', status: 'active' })
 const tagForm = reactive({ name: '', tag_type: '' })
@@ -383,12 +397,16 @@ async function loadBases(): Promise<void> {
 async function loadDocuments(): Promise<void> {
   loadingDocuments.value = true
   try {
-    const response = await listKnowledgeDocuments({ per_page: 50, knowledge_base_id: selectedBaseId.value ?? undefined, keyword: documentKeyword.value || undefined })
+    const response = await listKnowledgeDocuments({ page: documentPagination.current_page, per_page: documentPagination.per_page, knowledge_base_id: selectedBaseId.value ?? undefined, keyword: documentKeyword.value || undefined })
     documents.value = response.data
+    Object.assign(documentPagination, response.meta)
   } finally { loadingDocuments.value = false }
 }
 
-async function selectBase(row: KnowledgeBase): Promise<void> { selectedBaseId.value = row.id; await loadDocuments() }
+async function searchDocuments(): Promise<void> { documentPagination.current_page = 1; await loadDocuments() }
+async function selectBase(row: KnowledgeBase): Promise<void> { selectedBaseId.value = row.id; documentPagination.current_page = 1; await loadDocuments() }
+function handleDocumentPageChange(page: number): void { documentPagination.current_page = page; void loadDocuments() }
+function handleDocumentSizeChange(size: number): void { documentPagination.per_page = size; documentPagination.current_page = 1; void loadDocuments() }
 
 function openBaseDialog(row?: KnowledgeBase): void {
   resetBaseForm()
@@ -443,6 +461,7 @@ async function deleteDocument(row: KnowledgeDocument): Promise<void> {
   try {
     await deleteKnowledgeDocument(row.id)
     ElMessage.success('文档已删除')
+    if (documents.value.length === 1 && documentPagination.current_page > 1) documentPagination.current_page--
     await loadDocuments()
   } finally {
     deletingDocumentId.value = null
@@ -465,7 +484,7 @@ async function submitUrlImport(): Promise<void> {
   if (!urlForm.knowledge_base_id) { ElMessage.warning('请先选择知识库'); return }
   if (!urlForm.url) { ElMessage.warning('请输入链接'); return }
   importingUrl.value = true
-  try { await importKnowledgeDocumentUrl(urlForm); ElMessage.success('链接已导入，抓取任务已创建'); urlDialogVisible.value = false; await loadDocuments() } finally { importingUrl.value = false }
+  try { await importKnowledgeDocumentUrl(urlForm); ElMessage.success('链接已导入，抓取任务已创建'); urlDialogVisible.value = false; documentPagination.current_page = 1; await loadDocuments() } finally { importingUrl.value = false }
 }
 
 function openBatchUrlImportDialog(): void {
@@ -482,6 +501,7 @@ async function submitBatchUrlImport(): Promise<void> {
     const result = await importKnowledgeDocumentUrls(batchUrlForm)
     batchImportResult.value = result
     ElMessage.success(`批量导入完成：创建 ${result.created_count} 个，跳过 ${result.skipped_count} 个`)
+    documentPagination.current_page = 1
     await loadDocuments()
   } finally { importingUrls.value = false }
 }
