@@ -104,7 +104,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="操作" width="420" fixed="right">
+            <el-table-column label="操作" width="460" fixed="right">
               <template #default="scope">
                 <div class="flex flex-wrap gap-x-1">
                   <el-button link type="primary" @click="openDocumentDialog(scope.row)">编辑</el-button>
@@ -115,6 +115,7 @@
                   <el-button link type="danger" :loading="indexingDocumentId === scope.row.id" @click="indexDocument(scope.row.id)">一键入库</el-button>
                   <el-button link type="success" @click="publishDocument(scope.row.id)">发布</el-button>
                   <el-button link type="warning" @click="archiveDocument(scope.row.id)">归档</el-button>
+                  <el-button link type="danger" :loading="deletingDocumentId === scope.row.id" @click="deleteDocument(scope.row)">删除</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -297,7 +298,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, type UploadFile } from 'element-plus'
+import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import {
   archiveKnowledgeDocument,
@@ -305,6 +306,7 @@ import {
   createKnowledgeBase,
   createKnowledgeDocument,
   createKnowledgeTag,
+  deleteKnowledgeDocument,
   embedKnowledgeDocument,
   importKnowledgeDocumentUrl,
   importKnowledgeDocumentUrls,
@@ -339,6 +341,7 @@ const importingUrls = ref(false)
 const chunkingDocumentId = ref<number | null>(null)
 const embeddingDocumentId = ref<number | null>(null)
 const indexingDocumentId = ref<number | null>(null)
+const deletingDocumentId = ref<number | null>(null)
 
 const baseDialogVisible = ref(false)
 const tagDialogVisible = ref(false)
@@ -425,6 +428,27 @@ async function saveDocument(): Promise<void> {
   } finally { savingDocument.value = false }
 }
 
+async function deleteDocument(row: KnowledgeDocument): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除文档“${row.title}”吗？该操作会同时删除文件记录、切片、向量和入库任务，无法恢复。`,
+      '删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
+    return
+  }
+
+  deletingDocumentId.value = row.id
+  try {
+    await deleteKnowledgeDocument(row.id)
+    ElMessage.success('文档已删除')
+    await loadDocuments()
+  } finally {
+    deletingDocumentId.value = null
+  }
+}
+
 function openUploadDialog(row: KnowledgeDocument): void { uploadingDocument.value = row; selectedUploadFile.value = null; uploadDialogVisible.value = true }
 function handleFileChange(uploadFile: UploadFile): void { selectedUploadFile.value = uploadFile.raw ?? null }
 function handleFileRemove(): void { selectedUploadFile.value = null }
@@ -486,7 +510,7 @@ async function generateChunks(id: number): Promise<void> {
 
 async function embedDocument(id: number): Promise<void> {
   embeddingDocumentId.value = id
-  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? result.model_key ?? 'unknown'}`); await loadDocuments() } finally { embeddingDocumentId.value = null }
+  try { const result = await embedKnowledgeDocument(id); ElMessage.success(`向量化完成：${result.embedded_count} 个切片，模型：${result.model ?? 'unknown'}`); await loadDocuments() } finally { embeddingDocumentId.value = null }
 }
 
 async function indexDocument(id: number): Promise<void> {
