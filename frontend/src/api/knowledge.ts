@@ -176,6 +176,10 @@ export async function updateKnowledgeDocument(id: number, payload: KnowledgeDocu
   return response.data.data
 }
 
+export async function deleteKnowledgeDocument(id: number): Promise<void> {
+  await http.delete(`/knowledge-documents/${id}`)
+}
+
 export async function publishKnowledgeDocument(id: number): Promise<KnowledgeDocument> {
   const response = await http.post<{ data: KnowledgeDocument }>(`/knowledge-documents/${id}/publish`)
   return response.data.data
