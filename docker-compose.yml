@@ -66,7 +66,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      QUEUE_CONNECTION: database
+      QUEUE_CONNECTION: redis
       NO_PROXY: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
       no_proxy: localhost,127.0.0.1,postgres,redis,backend,backend-queue,ai-service,frontend
     volumes:
@@ -78,7 +78,7 @@ services:
         condition: service_healthy
       ai-service:
         condition: service_started
-    command: sh -lc "nice -n 10 php artisan queue:work database --queue=default --sleep=2 --tries=1 --timeout=900 --memory=384 --max-jobs=100 --max-time=3600"
+    command: sh -lc "nice -n 10 php artisan queue:work redis --queue=default --sleep=2 --tries=1 --timeout=900 --memory=384 --max-jobs=100 --max-time=3600"
 
   ai-service:
     build:
