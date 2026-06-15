@@ -17,7 +17,8 @@ class RagSearchService
     {
         $startedAt = microtime(true);
         $queryType = $this->classifyQuery($query);
-        $expandedQuery = $this->expandQuery($query, $queryType);
+        $querySubtype = $this->classifyQuerySubtype($query, $queryType);
+        $expandedQuery = $this->expandQuery($query, $queryType, $querySubtype);
 
         $embeddingStartedAt = microtime(true);
         $embedding = $this->embedQuery($expandedQuery);
@@ -43,14 +44,15 @@ class RagSearchService
         $dbElapsedMs = $this->elapsedMs($dbStartedAt);
 
         $rerankStartedAt = microtime(true);
-        $results = array_map(function ($row) use ($terms, $query, $expandedQuery, $activeModel, $queryType) {
+        $results = array_map(function ($row) use ($terms, $query, $expandedQuery, $activeModel, $queryType, $querySubtype) {
             $distance = (float) $row->distance;
             $vectorScore = 1 - $distance;
             $keywordScore = $this->keywordScore($row->content, $row->document_title, $terms);
             $sectionScore = $this->sectionScore($row->content, $query, $expandedQuery, $queryType);
             $policyScore = $this->policyRiskScore($row->content, $query, $queryType);
             $intentScore = $this->intentScore($row->content, $row->document_title, $queryType);
-            $finalScore = ($vectorScore * 0.45) + ($keywordScore * 0.25) + ($intentScore * 0.15) + ($sectionScore * 0.08) + ($policyScore * 0.07);
+            $sentencingScore = $this->sentencingEvidenceScore($row->content, $row->document_title);
+            $finalScore = ($vectorScore * 0.42) + ($keywordScore * 0.23) + ($intentScore * 0.12) + ($sentencingScore * 0.12) + ($sectionScore * 0.06) + ($policyScore * 0.05);
 
             return [
                 'chunk_id' => $row->chunk_id,
@@ -70,7 +72,9 @@ class RagSearchService
                 'section_score' => $sectionScore,
                 'policy_score' => $policyScore,
                 'intent_score' => $intentScore,
+                'sentencing_score' => $sentencingScore,
                 'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
                 'model_key' => $row->model_key ?? $activeModel?->model_key ?? 'legacy',
             ];
         }, $rows);
@@ -82,6 +86,7 @@ class RagSearchService
         Log::info('RAG search timing', [
             'knowledge_base_id' => $knowledgeBaseId,
             'query_type' => $queryType,
+            'query_subtype' => $querySubtype,
             'top_k' => $topK,
             'candidate_limit' => $candidateLimit,
             'active_model_key' => $activeModel?->model_key ?? 'legacy',
@@ -176,9 +181,11 @@ class RagSearchService
     public function buildRetrievalDiagnostics(string $query, array $results): array
     {
         $queryType = $this->classifyQuery($query);
+        $querySubtype = $this->classifyQuerySubtype($query, $queryType);
         $top = $results[0] ?? null;
         $maxKeywordScore = $results ? max(array_map(fn ($item) => (float) ($item['keyword_score'] ?? 0), $results)) : 0.0;
         $maxIntentScore = $results ? max(array_map(fn ($item) => (float) ($item['intent_score'] ?? 0), $results)) : 0.0;
+        $maxSentencingScore = $results ? max(array_map(fn ($item) => (float) ($item['sentencing_score'] ?? 0), $results)) : 0.0;
         $topScore = $top ? (float) ($top['score'] ?? 0) : 0.0;
         $topVectorScore = $top ? (float) ($top['vector_score'] ?? 0) : 0.0;
         $reasons = [];
@@ -187,6 +194,7 @@ class RagSearchService
             return [
                 'status' => 'no_results',
                 'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
                 'confidence' => 'none',
                 'answerable' => false,
                 'reason' => '当前知识库没有召回任何可用片段，无法回答该问题。',
@@ -204,15 +212,38 @@ class RagSearchService
         }
 
         if ($queryType === 'criminal_law' && $maxIntentScore < 0.35) {
-            $reasons[] = '问题属于刑事/量刑类，但召回结果没有命中刑法、贪污、受贿、判处、有期徒刑等直接依据。';
+            $reasons[] = '问题属于刑事法律类，但召回结果没有命中刑法、贪污、受贿、判处、有期徒刑等直接依据。';
+        }
+
+        if ($querySubtype === 'criminal_sentencing' && $maxSentencingScore < 0.35) {
+            $reason = '当前知识库只召回到涉嫌职务犯罪应移送处理或依法追究刑事责任的原则性条文，没有召回到贪污罪的量刑档次、判决年限或数额标准，不能回答“会判几年/怎样判决”。建议导入《中华人民共和国刑法》第三百八十二条、第三百八十三条，以及贪污贿赂犯罪相关司法解释后再查询。';
+
+            return [
+                'status' => 'missing_sentencing_basis',
+                'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
+                'confidence' => 'low',
+                'answerable' => false,
+                'reason' => $reason,
+                'reasons' => array_values(array_unique(array_merge($reasons, [
+                    '召回结果未包含“数额较大/巨大/特别巨大、十年以上有期徒刑、无期徒刑、死刑、罚金、没收财产”等量刑依据。',
+                ]))),
+                'next_action' => '补充刑法和贪污贿赂犯罪司法解释，或切换到包含刑事量刑依据的知识库。',
+                'top_score' => $topScore,
+                'top_vector_score' => $topVectorScore,
+                'max_keyword_score' => $maxKeywordScore,
+                'max_intent_score' => $maxIntentScore,
+                'max_sentencing_score' => $maxSentencingScore,
+            ];
         }
 
         if ($queryType === 'criminal_law' && $maxKeywordScore <= 0.0) {
-            $reason = '当前知识库中未检索到“贪污、受贿、刑法、判处、有期徒刑、无期徒刑”等直接依据。已召回内容与刑事量刑问题不匹配，不能支持可靠回答。建议导入《中华人民共和国刑法》及贪污贿赂犯罪相关司法解释后再查询。';
+            $reason = '当前知识库中未检索到“贪污、受贿、刑法、判处、有期徒刑、无期徒刑”等直接依据。已召回内容与刑事问题不匹配，不能支持可靠回答。建议导入《中华人民共和国刑法》及贪污贿赂犯罪相关司法解释后再查询。';
 
             return [
                 'status' => 'off_topic_or_insufficient_evidence',
                 'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
                 'confidence' => 'low',
                 'answerable' => false,
                 'reason' => $reason,
@@ -222,6 +253,7 @@ class RagSearchService
                 'top_vector_score' => $topVectorScore,
                 'max_keyword_score' => $maxKeywordScore,
                 'max_intent_score' => $maxIntentScore,
+                'max_sentencing_score' => $maxSentencingScore,
             ];
         }
 
@@ -229,6 +261,7 @@ class RagSearchService
             return [
                 'status' => 'low_confidence',
                 'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
                 'confidence' => 'low',
                 'answerable' => false,
                 'reason' => '当前召回片段与问题的关键词和主题匹配度不足，无法基于知识库给出可靠回答。',
@@ -238,12 +271,14 @@ class RagSearchService
                 'top_vector_score' => $topVectorScore,
                 'max_keyword_score' => $maxKeywordScore,
                 'max_intent_score' => $maxIntentScore,
+                'max_sentencing_score' => $maxSentencingScore,
             ];
         }
 
         return [
             'status' => $reasons === [] ? 'ok' : 'weak_but_answerable',
             'query_type' => $queryType,
+            'query_subtype' => $querySubtype,
             'confidence' => $reasons === [] ? 'medium' : 'low',
             'answerable' => true,
             'reason' => $reasons === [] ? '召回结果具备可回答依据。' : '召回结果相关性偏弱，但仍有一定可引用依据。',
@@ -253,6 +288,7 @@ class RagSearchService
             'top_vector_score' => $topVectorScore,
             'max_keyword_score' => $maxKeywordScore,
             'max_intent_score' => $maxIntentScore,
+            'max_sentencing_score' => $maxSentencingScore,
         ];
     }
 
@@ -372,9 +408,30 @@ SQL;
         return 'general_policy';
     }
 
-    private function expandQuery(string $query, ?string $queryType = null): string
+    private function classifyQuerySubtype(string $query, string $queryType): ?string
+    {
+        if ($queryType !== 'criminal_law') {
+            return null;
+        }
+
+        $lower = mb_strtolower($query);
+        foreach (['判决', '判刑', '量刑', '判几年', '几年', '坐牢', '有期徒刑', '无期徒刑', '死刑'] as $term) {
+            if (str_contains($lower, $term)) {
+                return 'criminal_sentencing';
+            }
+        }
+
+        if (preg_match('/[0-9]+\s*(万|万元|亿|亿元|元)/u', $query)) {
+            return 'criminal_sentencing';
+        }
+
+        return 'criminal_general';
+    }
+
+    private function expandQuery(string $query, ?string $queryType = null, ?string $querySubtype = null): string
     {
         $queryType ??= $this->classifyQuery($query);
+        $querySubtype ??= $this->classifyQuerySubtype($query, $queryType);
         $map = [
             '路由' => ['route', 'routing', 'Route'],
             '路径参数' => ['route parameters', 'URI segments', 'parameters', '{id}', '{post}', '{comment}'],
@@ -400,9 +457,17 @@ SQL;
 
         if ($queryType === 'criminal_law') {
             $map += [
-                '贪污' => ['贪污罪', '受贿', '刑法', '判处', '有期徒刑', '无期徒刑', '罚金', '没收财产', '数额特别巨大'],
-                '判决' => ['量刑', '判处', '有期徒刑', '无期徒刑', '死刑', '缓刑'],
+                '贪污' => ['贪污罪', '受贿', '刑法', '第三百八十二条', '第三百八十三条', '判处', '有期徒刑', '无期徒刑', '罚金', '没收财产', '数额特别巨大'],
+                '判决' => ['量刑', '判处', '有期徒刑', '无期徒刑', '死刑', '缓刑', '数额较大', '数额巨大', '数额特别巨大'],
                 '官员' => ['国家工作人员', '公职人员', '职务犯罪'],
+            ];
+        }
+
+        if ($querySubtype === 'criminal_sentencing') {
+            $map += [
+                '1000万' => ['数额特别巨大', '十年以上有期徒刑', '无期徒刑', '罚金', '没收财产'],
+                '判刑' => ['量刑档次', '刑期', '有期徒刑', '无期徒刑', '死刑'],
+                '量刑' => ['数额较大', '数额巨大', '数额特别巨大', '三年以上十年以下', '十年以上'],
             ];
         }
 
@@ -510,7 +575,7 @@ SQL;
     {
         $haystack = mb_strtolower($title.' '.$content);
         $terms = match ($queryType) {
-            'criminal_law' => ['刑法', '贪污', '受贿', '犯罪', '判处', '量刑', '有期徒刑', '无期徒刑', '死刑', '罚金', '数额特别巨大'],
+            'criminal_law' => ['刑法', '贪污', '受贿', '犯罪', '国家工作人员', '职务犯罪', '监察机关', '人民检察院'],
             'administrative_policy' => ['行政处罚', '罚款', '没收', '责令改正', '处分', '警告', '许可'],
             'procurement' => ['政府采购', '采购人', '供应商', '投标', '招标', '中标', '质疑', '投诉'],
             'radio_policy' => ['无线电', '电台', '频率', '发射设备', '有害干扰', '电台执照'],
@@ -529,6 +594,25 @@ SQL;
         }
 
         return min(1.0, $matched / 3);
+    }
+
+    private function sentencingEvidenceScore(string $content, string $title): float
+    {
+        $haystack = mb_strtolower($title.' '.$content);
+        $terms = [
+            '第三百八十三条', '第三百八十二条', '贪污罪', '数额较大', '数额巨大', '数额特别巨大',
+            '三年以下', '三年以上十年以下', '十年以上', '有期徒刑', '无期徒刑', '死刑',
+            '罚金', '没收财产', '量刑', '判处', '司法解释',
+        ];
+
+        $matched = 0;
+        foreach ($terms as $term) {
+            if (str_contains($haystack, $term)) {
+                $matched++;
+            }
+        }
+
+        return min(1.0, $matched / 4);
     }
 
     private function summarizeEvidencePoint(string $content, string $query, string $queryType): ?string
@@ -555,10 +639,6 @@ SQL;
 
         if ($queryType === 'criminal_law' && $this->intentScore($content, '', 'criminal_law') <= 0.0) {
             return null;
-        }
-
-        if (str_contains($text, '罚款') || str_contains($text, '没收') || str_contains($text, '警告') || str_contains($text, '处分')) {
-            return mb_substr($text, 0, 140);
         }
 
         return mb_substr($text, 0, 140) ?: null;
