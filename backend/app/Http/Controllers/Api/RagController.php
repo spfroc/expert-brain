@@ -31,6 +31,9 @@ class RagController extends Controller
                 $knowledgeBaseId,
                 $validated['top_k'] ?? 5,
             );
+            $retrievalDiagnostics = $results === []
+                ? $this->buildNoResultDiagnostics($knowledgeBaseId)
+                : $searchService->buildRetrievalDiagnostics($validated['query'], $results);
 
             return response()->json([
                 'success' => true,
@@ -39,7 +42,7 @@ class RagController extends Controller
                     'answer_draft' => $searchService->buildAnswerDraft($validated['query'], $results),
                     'results' => $results,
                     'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                    'diagnostics' => count($results) === 0 ? $this->buildNoResultDiagnostics($knowledgeBaseId) : null,
+                    'diagnostics' => $retrievalDiagnostics,
                 ],
                 'message' => 'ok',
                 'errors' => null,
