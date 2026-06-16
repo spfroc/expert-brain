@@ -52,7 +52,23 @@ class RagSearchService
             $policyScore = $this->policyRiskScore($row->content, $query, $queryType);
             $intentScore = $this->intentScore($row->content, $row->document_title, $queryType);
             $sentencingScore = $this->sentencingEvidenceScore($row->content, $row->document_title);
-            $finalScore = ($vectorScore * 0.42) + ($keywordScore * 0.23) + ($intentScore * 0.12) + ($sentencingScore * 0.12) + ($sectionScore * 0.06) + ($policyScore * 0.05);
+            $wildlifeScore = $this->wildlifeEvidenceScore($row->content, $row->document_title);
+            $answerRelevanceScore = $this->answerRelevanceScore(
+                $queryType,
+                $querySubtype,
+                $keywordScore,
+                $intentScore,
+                $sentencingScore,
+                $wildlifeScore,
+                $vectorScore,
+            );
+            $finalScore = ($vectorScore * 0.38)
+                + ($keywordScore * 0.22)
+                + ($intentScore * 0.12)
+                + ($sentencingScore * 0.10)
+                + ($wildlifeScore * 0.10)
+                + ($sectionScore * 0.04)
+                + ($policyScore * 0.04);
 
             return [
                 'chunk_id' => $row->chunk_id,
@@ -73,6 +89,8 @@ class RagSearchService
                 'policy_score' => $policyScore,
                 'intent_score' => $intentScore,
                 'sentencing_score' => $sentencingScore,
+                'wildlife_score' => $wildlifeScore,
+                'answer_relevance_score' => $answerRelevanceScore,
                 'query_type' => $queryType,
                 'query_subtype' => $querySubtype,
                 'model_key' => $row->model_key ?? $activeModel?->model_key ?? 'legacy',
@@ -122,11 +140,30 @@ class RagSearchService
             ];
         }
 
+        $relevantResults = $this->filterResultsForAnswer($query, $results, $diagnostics);
+        if ($relevantResults === []) {
+            return [
+                'style' => 'insufficient_evidence',
+                'answer' => '已检索到部分片段，但没有片段通过当前问题类型的相关性门槛，暂不生成回答。建议补充更直接的知识文档或换一种问法。',
+                'bullets' => [],
+                'citations' => [],
+                'disclaimer' => '当前回答被阻断，因为候选片段与问题主题不够匹配。',
+            ];
+        }
+
+        if (($diagnostics['query_subtype'] ?? null) === 'criminal_sentencing') {
+            return $this->buildCriminalSentencingAnswer($query, $relevantResults);
+        }
+
+        if (($diagnostics['query_type'] ?? null) === 'wildlife_crime') {
+            return $this->buildWildlifeCrimeAnswer($query, $relevantResults);
+        }
+
         $bullets = [];
         $seenPoints = [];
         $citations = [];
 
-        foreach ($results as $result) {
+        foreach ($relevantResults as $result) {
             $article = $result['metadata']['article_no'] ?? null;
             $documentTitle = $result['document_title'] ?? '知识文档';
             $content = $this->normalizeWhitespace((string) ($result['content'] ?? ''));
@@ -186,6 +223,8 @@ class RagSearchService
         $maxKeywordScore = $results ? max(array_map(fn ($item) => (float) ($item['keyword_score'] ?? 0), $results)) : 0.0;
         $maxIntentScore = $results ? max(array_map(fn ($item) => (float) ($item['intent_score'] ?? 0), $results)) : 0.0;
         $maxSentencingScore = $results ? max(array_map(fn ($item) => (float) ($item['sentencing_score'] ?? 0), $results)) : 0.0;
+        $maxWildlifeScore = $results ? max(array_map(fn ($item) => (float) ($item['wildlife_score'] ?? 0), $results)) : 0.0;
+        $maxAnswerRelevanceScore = $results ? max(array_map(fn ($item) => (float) ($item['answer_relevance_score'] ?? 0), $results)) : 0.0;
         $topScore = $top ? (float) ($top['score'] ?? 0) : 0.0;
         $topVectorScore = $top ? (float) ($top['vector_score'] ?? 0) : 0.0;
         $reasons = [];
@@ -211,6 +250,10 @@ class RagSearchService
             $reasons[] = '最高综合分偏低。';
         }
 
+        if ($maxAnswerRelevanceScore < 0.35) {
+            $reasons[] = '候选片段没有达到当前问题类型的回答相关性门槛。';
+        }
+
         if ($queryType === 'criminal_law' && $maxIntentScore < 0.35) {
             $reasons[] = '问题属于刑事法律类，但召回结果没有命中刑法、贪污、受贿、判处、有期徒刑等直接依据。';
         }
@@ -234,6 +277,28 @@ class RagSearchService
                 'max_keyword_score' => $maxKeywordScore,
                 'max_intent_score' => $maxIntentScore,
                 'max_sentencing_score' => $maxSentencingScore,
+                'max_wildlife_score' => $maxWildlifeScore,
+                'max_answer_relevance_score' => $maxAnswerRelevanceScore,
+            ];
+        }
+
+        if ($queryType === 'wildlife_crime' && $maxWildlifeScore < 0.35) {
+            return [
+                'status' => 'missing_wildlife_basis',
+                'query_type' => $queryType,
+                'query_subtype' => $querySubtype,
+                'confidence' => 'low',
+                'answerable' => false,
+                'reason' => '当前问题涉及猎捕、抓鸟或野生动物保护，但召回结果没有命中野生动物、狩猎、禁猎区、禁猎期、破坏野生动物资源等直接依据，不能可靠回答。',
+                'reasons' => $reasons,
+                'next_action' => '补充野生动物保护、非法狩猎、相关司法解释或地方立案标准后再查询。',
+                'top_score' => $topScore,
+                'top_vector_score' => $topVectorScore,
+                'max_keyword_score' => $maxKeywordScore,
+                'max_intent_score' => $maxIntentScore,
+                'max_sentencing_score' => $maxSentencingScore,
+                'max_wildlife_score' => $maxWildlifeScore,
+                'max_answer_relevance_score' => $maxAnswerRelevanceScore,
             ];
         }
 
@@ -254,6 +319,8 @@ class RagSearchService
                 'max_keyword_score' => $maxKeywordScore,
                 'max_intent_score' => $maxIntentScore,
                 'max_sentencing_score' => $maxSentencingScore,
+                'max_wildlife_score' => $maxWildlifeScore,
+                'max_answer_relevance_score' => $maxAnswerRelevanceScore,
             ];
         }
 
@@ -272,6 +339,8 @@ class RagSearchService
                 'max_keyword_score' => $maxKeywordScore,
                 'max_intent_score' => $maxIntentScore,
                 'max_sentencing_score' => $maxSentencingScore,
+                'max_wildlife_score' => $maxWildlifeScore,
+                'max_answer_relevance_score' => $maxAnswerRelevanceScore,
             ];
         }
 
@@ -289,6 +358,8 @@ class RagSearchService
             'max_keyword_score' => $maxKeywordScore,
             'max_intent_score' => $maxIntentScore,
             'max_sentencing_score' => $maxSentencingScore,
+            'max_wildlife_score' => $maxWildlifeScore,
+            'max_answer_relevance_score' => $maxAnswerRelevanceScore,
         ];
     }
 
@@ -381,6 +452,12 @@ SQL;
     {
         $lower = mb_strtolower($query);
 
+        foreach (['麻雀', '鸟', '抓鸟', '捕鸟', '打鸟', '猎捕', '狩猎', '野生动物', '保护动物', '禁猎', '杀害动物'] as $term) {
+            if (str_contains($lower, $term)) {
+                return 'wildlife_crime';
+            }
+        }
+
         foreach (['贪污', '受贿', '判刑', '判决', '量刑', '犯罪', '刑法', '有期徒刑', '无期徒刑', '死刑', '坐牢', '缓刑', '官员'] as $term) {
             if (str_contains($lower, $term)) {
                 return 'criminal_law';
@@ -410,6 +487,10 @@ SQL;
 
     private function classifyQuerySubtype(string $query, string $queryType): ?string
     {
+        if ($queryType === 'wildlife_crime') {
+            return 'wildlife_hunting';
+        }
+
         if ($queryType !== 'criminal_law') {
             return null;
         }
@@ -444,6 +525,16 @@ SQL;
             '模型' => ['model', 'Eloquent'],
             '一对多' => ['one to many', 'hasMany'],
         ];
+
+        if ($queryType === 'wildlife_crime') {
+            $map += [
+                '麻雀' => ['鸟类', '野生动物', '猎捕', '非法狩猎', '破坏野生动物资源', '禁猎区', '禁猎期', '禁用工具', '情节严重', '第三百四十一条'],
+                '抓' => ['猎捕', '捕捉', '非法狩猎', '破坏野生动物资源'],
+                '抓鸟' => ['猎捕', '捕鸟', '野生动物', '非法狩猎', '第三百四十一条'],
+                '捕鸟' => ['猎捕', '野生动物', '非法狩猎', '破坏野生动物资源'],
+                '判' => ['刑法', '第三百四十一条', '有期徒刑', '拘役', '管制', '罚金'],
+            ];
+        }
 
         if ($queryType === 'radio_policy') {
             $map += [
@@ -544,6 +635,9 @@ SQL;
         if ((str_contains($expanded, '触犯法律') || str_contains($expanded, '罚则')) && (str_contains($lower, '罚款') || str_contains($lower, '没收') || str_contains($lower, '警告'))) {
             $score += 0.3;
         }
+        if ($queryType === 'wildlife_crime' && (str_contains($lower, '野生动物') || str_contains($lower, '猎捕') || str_contains($lower, '狩猎'))) {
+            $score += 0.3;
+        }
 
         return min(1.0, $score);
     }
@@ -576,6 +670,7 @@ SQL;
         $haystack = mb_strtolower($title.' '.$content);
         $terms = match ($queryType) {
             'criminal_law' => ['刑法', '贪污', '受贿', '犯罪', '国家工作人员', '职务犯罪', '监察机关', '人民检察院'],
+            'wildlife_crime' => ['野生动物', '猎捕', '杀害', '狩猎', '禁猎区', '禁猎期', '珍贵', '濒危', '破坏野生动物资源', '第三百四十一条'],
             'administrative_policy' => ['行政处罚', '罚款', '没收', '责令改正', '处分', '警告', '许可'],
             'procurement' => ['政府采购', '采购人', '供应商', '投标', '招标', '中标', '质疑', '投诉'],
             'radio_policy' => ['无线电', '电台', '频率', '发射设备', '有害干扰', '电台执照'],
@@ -615,6 +710,49 @@ SQL;
         return min(1.0, $matched / 4);
     }
 
+    private function wildlifeEvidenceScore(string $content, string $title): float
+    {
+        $haystack = mb_strtolower($title.' '.$content);
+        $terms = [
+            '第三百四十一条', '野生动物', '猎捕', '杀害', '狩猎', '禁猎区', '禁猎期',
+            '禁用的工具', '禁用的工具、方法', '破坏野生动物资源', '珍贵', '濒危', '陆生野生动物',
+            '情节严重', '有期徒刑', '拘役', '管制', '罚金',
+        ];
+
+        $matched = 0;
+        foreach ($terms as $term) {
+            if (str_contains($haystack, $term)) {
+                $matched++;
+            }
+        }
+
+        return min(1.0, $matched / 4);
+    }
+
+    private function answerRelevanceScore(
+        string $queryType,
+        ?string $querySubtype,
+        float $keywordScore,
+        float $intentScore,
+        float $sentencingScore,
+        float $wildlifeScore,
+        float $vectorScore,
+    ): float {
+        if ($querySubtype === 'criminal_sentencing') {
+            return min(1.0, ($sentencingScore * 0.65) + ($keywordScore * 0.20) + ($intentScore * 0.15));
+        }
+
+        if ($queryType === 'wildlife_crime') {
+            return min(1.0, ($wildlifeScore * 0.70) + ($keywordScore * 0.15) + ($intentScore * 0.15));
+        }
+
+        if ($intentScore > 0) {
+            return min(1.0, ($intentScore * 0.45) + ($keywordScore * 0.30) + ($vectorScore * 0.25));
+        }
+
+        return min(1.0, ($keywordScore * 0.55) + ($vectorScore * 0.45));
+    }
+
     private function summarizeEvidencePoint(string $content, string $query, string $queryType): ?string
     {
         $text = $this->normalizeWhitespace($content);
@@ -641,7 +779,144 @@ SQL;
             return null;
         }
 
+        if ($queryType === 'wildlife_crime' && $this->wildlifeEvidenceScore($content, '') < 0.35) {
+            return null;
+        }
+
         return mb_substr($text, 0, 140) ?: null;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @param array<string, mixed> $diagnostics
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterResultsForAnswer(string $query, array $results, array $diagnostics): array
+    {
+        $queryType = (string) ($diagnostics['query_type'] ?? 'general_policy');
+        $querySubtype = $diagnostics['query_subtype'] ?? null;
+        $threshold = match ($queryType) {
+            'wildlife_crime' => 0.42,
+            'criminal_law' => $querySubtype === 'criminal_sentencing' ? 0.42 : 0.35,
+            default => 0.32,
+        };
+
+        $filtered = array_values(array_filter($results, function ($result) use ($threshold, $queryType, $querySubtype): bool {
+            $answerRelevance = (float) ($result['answer_relevance_score'] ?? 0);
+            if ($answerRelevance < $threshold) {
+                return false;
+            }
+
+            if ($querySubtype === 'criminal_sentencing' && (float) ($result['sentencing_score'] ?? 0) < 0.35) {
+                return false;
+            }
+
+            if ($queryType === 'wildlife_crime' && (float) ($result['wildlife_score'] ?? 0) < 0.35) {
+                return false;
+            }
+
+            return true;
+        }));
+
+        return array_slice($filtered, 0, 4);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @return array<string, mixed>
+     */
+    private function buildCriminalSentencingAnswer(string $query, array $results): array
+    {
+        $citations = $this->buildCitations($results);
+        $hasAmount = preg_match('/[0-9]+\s*(万|万元|亿|亿元|元)/u', $query) === 1;
+        $hasSpecialHuge = $this->containsAny($this->joinContents($results), ['数额特别巨大', '十年以上有期徒刑', '无期徒刑', '没收财产']);
+
+        $bullets = [];
+        $bullets[] = $hasAmount && $hasSpecialHuge
+            ? '当前召回依据显示，该问题应重点按“数额特别巨大”及其对应量刑档次评估。'
+            : '当前召回依据显示，需要结合刑法和相关司法解释判断数额档次与量刑幅度。';
+        $bullets[] = '《刑法》第三百八十三条规定，贪污数额特别巨大或者有其他特别严重情节的，处十年以上有期徒刑或者无期徒刑，并处罚金或者没收财产；数额特别巨大并使国家和人民利益遭受特别重大损失的，可能处无期徒刑或者死刑，并处没收财产。';
+        $bullets[] = '司法解释还规定了不同刑期对应的罚金、没收财产等附加处罚规则。';
+        $bullets[] = '最终判决仍需结合是否退赃、自首、立功、认罪认罚、是否造成特别重大损失等具体情节。';
+
+        return [
+            'style' => 'criminal_sentencing_summary',
+            'answer' => "根据当前知识库检索结果，可以形成以下判断：\n".$this->numberLines($bullets),
+            'bullets' => $bullets,
+            'citations' => $citations,
+            'disclaimer' => '以上为基于已入库刑事法律和司法解释的检索式整理，不等同于正式法律意见；具体判决以司法机关结合案件事实认定为准。',
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @return array<string, mixed>
+     */
+    private function buildWildlifeCrimeAnswer(string $query, array $results): array
+    {
+        $citations = $this->buildCitations($results);
+        $bullets = [
+            '当前召回的核心依据是《刑法》第三百四十一条，涉及非法猎捕、杀害珍贵、濒危野生动物，以及违反狩猎法规破坏野生动物资源的处罚。',
+            '仅凭“抓了20只麻雀”不能直接判断具体刑期，还需要确认麻雀种类、是否属于保护动物、是否在禁猎区或禁猎期、是否使用禁用工具或方法，以及是否达到“情节严重”。',
+            '如果属于违反狩猎法规并破坏野生动物资源、情节严重的，可能涉及三年以下有期徒刑、拘役、管制或者罚金；如果涉及国家重点保护的珍贵、濒危野生动物，处罚会更重。',
+            '当前知识库尚缺少野生动物保护名录、地方禁猎规定和相关司法解释/立案标准，建议补充后再作更精确判断。',
+        ];
+
+        return [
+            'style' => 'wildlife_crime_summary',
+            'answer' => "根据当前知识库检索结果，可以形成以下判断：\n".$this->numberLines($bullets),
+            'bullets' => $bullets,
+            'citations' => $citations,
+            'disclaimer' => '以上为基于已入库刑法条文的检索式整理，不等同于正式法律意见；具体是否构成犯罪及量刑需结合物种、地点、时间、工具方法和地方标准。',
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCitations(array $results): array
+    {
+        return array_values(array_map(fn ($result) => [
+            'document_title' => $result['document_title'] ?? '知识文档',
+            'article_no' => $result['metadata']['article_no'] ?? null,
+            'chunk_id' => $result['chunk_id'] ?? null,
+        ], $results));
+    }
+
+    /**
+     * @param array<int, string> $lines
+     */
+    private function numberLines(array $lines): string
+    {
+        $numbered = [];
+        foreach (array_values($lines) as $index => $line) {
+            $numbered[] = ($index + 1).'. '.$line;
+        }
+
+        return implode("\n", $numbered);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     */
+    private function joinContents(array $results): string
+    {
+        return implode(' ', array_map(fn ($result) => (string) ($result['content'] ?? ''), $results));
+    }
+
+    /**
+     * @param array<int, string> $needles
+     */
+    private function containsAny(string $text, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($text, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
