@@ -93,6 +93,13 @@ export interface RagSearchResult {
   keyword_score?: number
   section_score?: number
   policy_score?: number
+  intent_score?: number
+  sentencing_score?: number
+  wildlife_score?: number
+  answer_relevance_score?: number
+  used_in_answer?: boolean
+  query_type?: string | null
+  query_subtype?: string | null
   model_key?: string | null
 }
 
@@ -113,20 +120,33 @@ export interface RagAnswerDraft {
 export interface RagSearchDiagnostics {
   status: 'no_documents' | 'no_chunks' | 'no_embeddings' | 'low_similarity' | string
   reason: string
-  next_action: string
+  next_action: string | null
   knowledge_base_id?: number | null
   knowledge_base_name?: string | null
   active_embedding_model_key?: string | null
-  documents_count: number
-  chunks_count: number
-  legacy_embeddings_count: number
-  active_model_embeddings_count: number
-  effective_embeddings_count: number
+  documents_count?: number
+  chunks_count?: number
+  legacy_embeddings_count?: number
+  active_model_embeddings_count?: number
+  effective_embeddings_count?: number
+  query_type?: string | null
+  query_subtype?: string | null
+  confidence?: string | null
+  answerable?: boolean
+  reasons?: string[]
+  top_score?: number
+  top_vector_score?: number
+  max_keyword_score?: number
+  max_intent_score?: number
+  max_sentencing_score?: number
+  max_wildlife_score?: number
+  max_answer_relevance_score?: number
 }
 
 export interface RagSearchResponse {
   query: string
   answer_draft?: RagAnswerDraft | null
+  evidence_results?: RagSearchResult[]
   results: RagSearchResult[]
   elapsed_ms?: number
   diagnostics?: RagSearchDiagnostics | null
