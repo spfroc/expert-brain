@@ -9,7 +9,7 @@
           </div>
           <h1 class="mt-3 text-2xl font-semibold text-slate-900">AI 问答</h1>
           <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-            当前页面用于验证“问题 → 向量化 → 召回切片 → 回答草稿”的链路。回答草稿优先使用后端基于条文整理的简明版本。
+            当前页面用于验证“问题 → 向量化 → 召回切片 → 回答草稿”的链路。默认展示真正参与回答的依据，原始召回候选折叠到调试区。
           </p>
         </div>
         <div class="grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
@@ -63,7 +63,7 @@
               <el-option v-for="base in bases" :key="base.id" :label="base.name" :value="base.id" />
             </el-select>
             <div class="mt-2 text-xs text-slate-400">
-              不选择知识库时会全库检索，容易召回无关内容。测试法规问题时建议选择法规库。
+              不选择知识库时会全库检索，容易召回无关内容。测试法规问题时建议选择对应知识库。
             </div>
           </el-form-item>
 
@@ -74,7 +74,7 @@
               :rows="4"
               maxlength="500"
               show-word-limit
-              placeholder="例如：无线电爱好者平时使用无线电设备应注意哪些法律风险？"
+              placeholder="例如：官员贪污1000万会怎样判决？"
               @keyup.ctrl.enter="runSearch"
             />
           </el-form-item>
@@ -131,22 +131,22 @@
       <div v-else-if="diagnostics" class="space-y-4">
         <el-alert
           :title="diagnostics.reason"
-          :description="diagnostics.next_action"
+          :description="diagnostics.next_action || undefined"
           :type="diagnosticTagType"
           show-icon
           :closable="false"
         />
         <div class="grid gap-3 md:grid-cols-5">
           <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
-            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.documents_count }}</div>
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.documents_count ?? '-' }}</div>
             <div class="text-xs text-slate-500">文档</div>
           </div>
           <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
-            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.chunks_count }}</div>
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.chunks_count ?? '-' }}</div>
             <div class="text-xs text-slate-500">切片</div>
           </div>
           <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
-            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.effective_embeddings_count }}</div>
+            <div class="text-lg font-semibold text-slate-900">{{ diagnostics.effective_embeddings_count ?? '-' }}</div>
             <div class="text-xs text-slate-500">有效向量</div>
           </div>
           <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
@@ -167,35 +167,82 @@
       </el-empty>
     </el-card>
 
-    <el-card v-if="results.length > 0" shadow="never" class="border-slate-200">
+    <el-card v-if="evidenceResults.length > 0" shadow="never" class="border-slate-200">
       <template #header>
         <div class="flex items-center justify-between">
-          <div class="font-semibold text-slate-900">召回结果</div>
-          <div class="text-xs text-slate-400">按综合分排序，score 越高越相关</div>
+          <div>
+            <div class="font-semibold text-slate-900">回答依据</div>
+            <div class="mt-1 text-xs text-slate-400">仅展示真正参与 answer_draft 的片段</div>
+          </div>
+          <el-tag type="success" effect="plain">{{ evidenceResults.length }} 条</el-tag>
         </div>
       </template>
 
       <div class="space-y-4">
-        <div v-for="item in results" :key="item.chunk_id" class="rounded-xl border border-slate-200 bg-white p-4 transition hover:shadow-sm">
-          <div class="flex flex-col gap-2 border-b border-slate-100 pb-3 lg:flex-row lg:items-start lg:justify-between">
+        <div v-for="item in evidenceResults" :key="item.chunk_id" class="rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 transition hover:shadow-sm">
+          <div class="flex flex-col gap-2 border-b border-emerald-100 pb-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div class="font-semibold text-slate-900">{{ item.document_title }}</div>
-              <div class="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+              <div class="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
                 <span>chunk #{{ item.chunk_index }}</span>
                 <span>模型：{{ item.model_key ?? 'legacy' }}</span>
-                <span v-if="item.source_type">来源：{{ item.source_type }}</span>
+                <span v-if="articleNo(item)">条款：{{ articleNo(item) }}</span>
+                <span v-if="item.query_type">类型：{{ item.query_type }}</span>
               </div>
             </div>
             <div class="flex flex-wrap gap-2 text-xs">
+              <el-tag type="success" effect="plain">used</el-tag>
               <el-tag :type="scoreTagType(item.score)" effect="plain">score {{ item.score.toFixed(4) }}</el-tag>
-              <el-tag effect="plain">distance {{ item.distance.toFixed(4) }}</el-tag>
-              <el-tag v-if="item.policy_score !== undefined" effect="plain">policy {{ item.policy_score.toFixed(2) }}</el-tag>
+              <el-tag v-if="item.answer_relevance_score !== undefined" effect="plain">answer {{ item.answer_relevance_score.toFixed(3) }}</el-tag>
             </div>
           </div>
           <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{{ item.content }}</div>
-          <div v-if="item.source_url" class="mt-3 break-all rounded bg-slate-50 px-3 py-2 text-xs text-slate-400">{{ item.source_url }}</div>
+          <div v-if="item.source_url" class="mt-3 break-all rounded bg-white/70 px-3 py-2 text-xs text-slate-400">{{ item.source_url }}</div>
         </div>
       </div>
+    </el-card>
+
+    <el-card v-if="results.length > 0" shadow="never" class="border-slate-200">
+      <template #header>
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="font-semibold text-slate-900">调试候选结果</div>
+            <div class="mt-1 text-xs text-slate-400">原始召回候选，默认折叠；answer_draft 不一定使用这些片段</div>
+          </div>
+          <div class="text-xs text-slate-400">按综合分排序，score 越高越相关</div>
+        </div>
+      </template>
+
+      <el-collapse>
+        <el-collapse-item :title="`查看全部候选结果（${results.length} 条）`" name="debug-results">
+          <div class="space-y-4">
+            <div v-for="item in results" :key="item.chunk_id" class="rounded-xl border border-slate-200 bg-white p-4 transition hover:shadow-sm">
+              <div class="flex flex-col gap-2 border-b border-slate-100 pb-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div class="font-semibold text-slate-900">{{ item.document_title }}</div>
+                  <div class="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                    <span>chunk #{{ item.chunk_index }}</span>
+                    <span>模型：{{ item.model_key ?? 'legacy' }}</span>
+                    <span v-if="item.source_type">来源：{{ item.source_type }}</span>
+                    <span v-if="articleNo(item)">条款：{{ articleNo(item) }}</span>
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2 text-xs">
+                  <el-tag :type="item.used_in_answer ? 'success' : 'info'" effect="plain">
+                    {{ item.used_in_answer ? 'used' : 'debug' }}
+                  </el-tag>
+                  <el-tag :type="scoreTagType(item.score)" effect="plain">score {{ item.score.toFixed(4) }}</el-tag>
+                  <el-tag effect="plain">distance {{ item.distance.toFixed(4) }}</el-tag>
+                  <el-tag v-if="item.answer_relevance_score !== undefined" effect="plain">answer {{ item.answer_relevance_score.toFixed(3) }}</el-tag>
+                  <el-tag v-if="item.policy_score !== undefined" effect="plain">policy {{ item.policy_score.toFixed(2) }}</el-tag>
+                </div>
+              </div>
+              <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{{ item.content }}</div>
+              <div v-if="item.source_url" class="mt-3 break-all rounded bg-slate-50 px-3 py-2 text-xs text-slate-400">{{ item.source_url }}</div>
+            </div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </el-card>
   </div>
 </template>
@@ -214,14 +261,16 @@ const topK = ref(5)
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<RagSearchResult[]>([])
+const evidenceResults = ref<RagSearchResult[]>([])
 const answerDraft = ref<RagAnswerDraft | null>(null)
 const diagnostics = ref<RagSearchDiagnostics | null>(null)
 const elapsedMs = ref<number | null>(null)
 const errorMessage = ref('')
 
 const questionExamples = [
+  '官员贪污1000万会怎样判决？',
+  '在山上抓了20只麻雀被抓了会怎样判？',
   '无线电爱好者平时使用无线电设备应注意哪些法律风险？',
-  '我是一名无线电爱好者，在实际开发测试时应该注意哪些事项避免触犯法律？',
   '政府采购供应商参加采购活动需要具备哪些条件？'
 ]
 
@@ -235,15 +284,17 @@ const bestScoreClass = computed(() => {
 })
 const diagnosticTagType = computed((): 'success' | 'warning' | 'danger' | 'info' => {
   if (!diagnostics.value) return 'info'
-  if (['low_similarity', 'no_documents', 'no_chunks', 'no_embeddings'].includes(diagnostics.value.status)) return 'warning'
+  if (['low_similarity', 'no_documents', 'no_chunks', 'no_embeddings', 'missing_sentencing_basis', 'missing_wildlife_basis'].includes(diagnostics.value.status)) return 'warning'
+  if (diagnostics.value.status === 'ok') return 'success'
   return 'info'
 })
 
 const answerDraftText = computed(() => {
   if (answerDraft.value?.answer) return answerDraft.value.answer
-  if (results.value.length === 0) return ''
+  const fallbackResults = evidenceResults.value.length > 0 ? evidenceResults.value : results.value
+  if (fallbackResults.length === 0) return ''
 
-  const lines = results.value.slice(0, 3).map((item, index) => `${index + 1}. 【${item.document_title}】\n${item.content}`)
+  const lines = fallbackResults.slice(0, 3).map((item, index) => `${index + 1}. 【${item.document_title}】\n${item.content}`)
   return [
     `问题：${query.value}`,
     '',
@@ -266,6 +317,7 @@ function fillExample(): void {
 function clearSearch(): void {
   query.value = ''
   results.value = []
+  evidenceResults.value = []
   answerDraft.value = null
   diagnostics.value = null
   elapsedMs.value = null
@@ -284,9 +336,11 @@ async function runSearch(): Promise<void> {
   elapsedMs.value = null
   diagnostics.value = null
   answerDraft.value = null
+  evidenceResults.value = []
   try {
     const response = await searchRag(query.value, selectedBaseId.value, topK.value)
     results.value = response.results
+    evidenceResults.value = response.evidence_results ?? response.results.filter((item) => item.used_in_answer)
     answerDraft.value = response.answer_draft ?? null
     diagnostics.value = response.diagnostics ?? null
     elapsedMs.value = response.elapsed_ms ?? null
@@ -294,6 +348,7 @@ async function runSearch(): Promise<void> {
   } catch (error) {
     searched.value = true
     results.value = []
+    evidenceResults.value = []
     answerDraft.value = null
     if (axios.isAxiosError(error)) {
       diagnostics.value = error.response?.data?.data?.diagnostics ?? null
@@ -318,6 +373,11 @@ function scoreTagType(score: number): 'success' | 'warning' | 'danger' | 'info' 
   if (score >= 0.45) return 'success'
   if (score >= 0.35) return 'warning'
   return 'danger'
+}
+
+function articleNo(item: RagSearchResult): string | null {
+  const value = item.metadata?.article_no
+  return typeof value === 'string' ? value : null
 }
 
 onMounted(loadBases)
