@@ -31,6 +31,8 @@ class RagController extends Controller
                 $knowledgeBaseId,
                 $validated['top_k'] ?? 5,
             );
+            $answerDraft = $searchService->buildAnswerDraft($validated['query'], $results);
+            [$results, $evidenceResults] = $this->markEvidenceResults($results, $answerDraft);
             $retrievalDiagnostics = $results === []
                 ? $this->buildNoResultDiagnostics($knowledgeBaseId)
                 : $searchService->buildRetrievalDiagnostics($validated['query'], $results);
@@ -39,7 +41,8 @@ class RagController extends Controller
                 'success' => true,
                 'data' => [
                     'query' => $validated['query'],
-                    'answer_draft' => $searchService->buildAnswerDraft($validated['query'], $results),
+                    'answer_draft' => $answerDraft,
+                    'evidence_results' => $evidenceResults,
                     'results' => $results,
                     'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'diagnostics' => $retrievalDiagnostics,
@@ -60,6 +63,7 @@ class RagController extends Controller
                 'data' => [
                     'query' => $validated['query'],
                     'answer_draft' => null,
+                    'evidence_results' => [],
                     'results' => [],
                     'diagnostics' => $this->buildNoResultDiagnostics($validated['knowledge_base_id'] ?? null),
                 ],
@@ -69,6 +73,36 @@ class RagController extends Controller
                 ],
             ], 500);
         }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $results
+     * @param array<string, mixed>|null $answerDraft
+     * @return array{0: array<int, array<string, mixed>>, 1: array<int, array<string, mixed>>}
+     */
+    private function markEvidenceResults(array $results, ?array $answerDraft): array
+    {
+        $usedChunkIds = [];
+        foreach (($answerDraft['citations'] ?? []) as $citation) {
+            $chunkId = $citation['chunk_id'] ?? null;
+            if ($chunkId !== null) {
+                $usedChunkIds[(int) $chunkId] = true;
+            }
+        }
+
+        $evidenceResults = [];
+        foreach ($results as &$result) {
+            $chunkId = (int) ($result['chunk_id'] ?? 0);
+            $used = isset($usedChunkIds[$chunkId]);
+            $result['used_in_answer'] = $used;
+
+            if ($used) {
+                $evidenceResults[] = $result;
+            }
+        }
+        unset($result);
+
+        return [$results, $evidenceResults];
     }
 
     /**
