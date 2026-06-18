@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AiModel;
 use App\Models\DocumentChunk;
 use App\Models\KnowledgeBase;
+use App\Models\KnowledgeBaseRelation;
 use App\Models\KnowledgeDocument;
 use App\Services\Rag\RagSearchService;
 use Illuminate\Http\JsonResponse;
@@ -21,21 +22,34 @@ class RagController extends Controller
             'query' => ['required', 'string', 'max:2000'],
             'knowledge_base_id' => ['nullable', 'integer', 'exists:knowledge_bases,id'],
             'top_k' => ['nullable', 'integer', 'min:1', 'max:20'],
+            'search_scope' => ['nullable', 'string', 'in:current,current_with_related,auto,all'],
         ]);
 
         try {
             $startedAt = microtime(true);
             $knowledgeBaseId = $validated['knowledge_base_id'] ?? null;
-            $results = $searchService->search(
+            $topK = $validated['top_k'] ?? 5;
+            $searchScope = $validated['search_scope'] ?? 'current';
+            [$results, $searchedKnowledgeBaseIds, $scopeExpanded, $scopeReason] = $this->runScopedSearch(
+                $searchService,
                 $validated['query'],
                 $knowledgeBaseId,
-                $validated['top_k'] ?? 5,
+                $topK,
+                $searchScope,
             );
+
             $answerDraft = $searchService->buildAnswerDraft($validated['query'], $results);
             [$results, $evidenceResults] = $this->markEvidenceResults($results, $answerDraft);
             $retrievalDiagnostics = $results === []
                 ? $this->buildNoResultDiagnostics($knowledgeBaseId)
                 : $searchService->buildRetrievalDiagnostics($validated['query'], $results);
+            $retrievalDiagnostics = $this->withScopeDiagnostics(
+                $retrievalDiagnostics,
+                $searchScope,
+                $searchedKnowledgeBaseIds,
+                $scopeExpanded,
+                $scopeReason,
+            );
 
             return response()->json([
                 'success' => true,
@@ -73,6 +87,112 @@ class RagController extends Controller
                 ],
             ], 500);
         }
+    }
+
+    /**
+     * @return array{0: array<int, array<string, mixed>>, 1: array<int, int>, 2: bool, 3: string|null}
+     */
+    private function runScopedSearch(
+        RagSearchService $searchService,
+        string $query,
+        ?int $knowledgeBaseId,
+        int $topK,
+        string $searchScope,
+    ): array {
+        if ($searchScope === 'all' || $knowledgeBaseId === null) {
+            return [$searchService->search($query, null, $topK), [], $searchScope === 'all', $searchScope === 'all' ? '用户选择全库检索。' : null];
+        }
+
+        $currentResults = $searchService->search($query, $knowledgeBaseId, $topK);
+        $currentDiagnostics = $currentResults === []
+            ? $this->buildNoResultDiagnostics($knowledgeBaseId)
+            : $searchService->buildRetrievalDiagnostics($query, $currentResults);
+        $relatedIds = $this->relatedKnowledgeBaseIds($knowledgeBaseId);
+
+        if ($searchScope === 'current') {
+            return [$currentResults, [$knowledgeBaseId], false, null];
+        }
+
+        if ($relatedIds === []) {
+            return [$currentResults, [$knowledgeBaseId], false, '当前知识库没有配置关联知识库。'];
+        }
+
+        if ($searchScope === 'auto' && ($currentDiagnostics['answerable'] ?? false) === true && ($currentDiagnostics['status'] ?? null) === 'ok') {
+            return [$currentResults, [$knowledgeBaseId], false, '自动检索未扩展：当前知识库已经召回可回答依据。'];
+        }
+
+        $scopeIds = array_values(array_unique(array_merge([$knowledgeBaseId], $relatedIds)));
+        $mergedResults = $this->searchAcrossKnowledgeBases($searchService, $query, $scopeIds, $topK);
+        $reason = $searchScope === 'auto'
+            ? '自动检索已扩展到关联知识库，因为当前知识库召回结果不足或偏弱。'
+            : '用户选择当前知识库及其关联知识库。';
+
+        return [$mergedResults, $scopeIds, true, $reason];
+    }
+
+    /**
+     * @param array<int, int> $knowledgeBaseIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function searchAcrossKnowledgeBases(RagSearchService $searchService, string $query, array $knowledgeBaseIds, int $topK): array
+    {
+        $results = [];
+        $perBaseTopK = max($topK, 5);
+
+        foreach ($knowledgeBaseIds as $knowledgeBaseId) {
+            array_push($results, ...$searchService->search($query, $knowledgeBaseId, $perBaseTopK));
+        }
+
+        $seen = [];
+        $deduped = [];
+        foreach ($results as $result) {
+            $chunkId = (int) ($result['chunk_id'] ?? 0);
+            if ($chunkId === 0 || isset($seen[$chunkId])) {
+                continue;
+            }
+
+            $seen[$chunkId] = true;
+            $deduped[] = $result;
+        }
+
+        usort($deduped, fn ($a, $b) => ((float) ($b['score'] ?? 0)) <=> ((float) ($a['score'] ?? 0)));
+
+        return array_slice($deduped, 0, max(1, min($topK, 20)));
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function relatedKnowledgeBaseIds(int $knowledgeBaseId): array
+    {
+        $outgoing = KnowledgeBaseRelation::query()
+            ->where('source_knowledge_base_id', $knowledgeBaseId)
+            ->where('is_active', true)
+            ->pluck('related_knowledge_base_id')
+            ->all();
+
+        $incoming = KnowledgeBaseRelation::query()
+            ->where('related_knowledge_base_id', $knowledgeBaseId)
+            ->where('is_active', true)
+            ->pluck('source_knowledge_base_id')
+            ->all();
+
+        return array_values(array_unique(array_map('intval', array_merge($outgoing, $incoming))));
+    }
+
+    /**
+     * @param array<string, mixed> $diagnostics
+     * @param array<int, int> $searchedKnowledgeBaseIds
+     * @return array<string, mixed>
+     */
+    private function withScopeDiagnostics(array $diagnostics, string $searchScope, array $searchedKnowledgeBaseIds, bool $scopeExpanded, ?string $scopeReason): array
+    {
+        $diagnostics['search_scope'] = $searchScope;
+        $diagnostics['searched_knowledge_base_ids'] = $searchedKnowledgeBaseIds;
+        $diagnostics['scope_expanded'] = $scopeExpanded;
+        $diagnostics['scope_reason'] = $scopeReason;
+
+        return $diagnostics;
     }
 
     /**
